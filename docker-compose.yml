@@ -1,0 +1,45 @@
+services:
+  mysql:
+    image: mysql:8
+    container_name: tanki-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: tanki_jene
+      MYSQL_USER: tanki
+      MYSQL_PASSWORD: password
+    ports:
+      - "3306:3306"
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - tanki_mysql_data:/var/lib/mysql
+
+  # Mailpit — SMTP sink lokal untuk uji email. SMTP :1025, web UI :8025.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: tanki-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # Keycloak lokal untuk development (pengganti instance DIAMOND saat VPS down).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    container_name: tanki-keycloak
+    restart: unless-stopped
+    command: ["start-dev"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - tanki_keycloak_data:/opt/keycloak/data
+
+volumes:
+  tanki_mysql_data:
+  tanki_keycloak_data:

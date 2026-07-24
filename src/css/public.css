@@ -1,0 +1,31 @@
+/* Tampilan portal publik Tanki Je'ne' — tema "air dalam" + aksen aqua. */
+
+.tj-display {
+  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+
+/* Hero gradient: air dalam → permukaan */
+.tj-hero {
+  background:
+    radial-gradient(1200px 500px at 80% -10%, rgba(56, 189, 248, 0.35), transparent 60%),
+    linear-gradient(180deg, #0a2540 0%, #0c4a6e 55%, #075985 100%);
+}
+
+/* Wave divider di dasar hero */
+.tj-wave path {
+  animation: tj-drift 14s ease-in-out infinite alternate;
+}
+@keyframes tj-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-40px); }
+}
+
+/* Permukaan "air" untuk progress lacak */
+.tj-water {
+  background: linear-gradient(180deg, #7dd3fc 0%, #38bdf8 45%, #0284c7 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tj-wave path { animation: none; }
+}

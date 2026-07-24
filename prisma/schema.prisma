@@ -1,0 +1,210 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// ---------------------------------------------------------------------------
+// Master data pelanggan (read-only). Diimpor dari pelanggan.sql (~231k baris).
+// JANGAN ditulis dari aplikasi — hanya validasi & auto-fill / pencarian.
+// Tabel dibuat lewat db/pelanggan_ddl.sql lalu di-baseline ke Prisma.
+// ---------------------------------------------------------------------------
+model Pelanggan {
+  nosamb    String  @id @db.Char(9)
+  nama      String  @db.VarChar(150)
+  alamat    String? @db.VarChar(255)
+  koderayon String? @db.VarChar(7)
+  wil       String? @db.Char(2)
+
+  @@index([nama], map: "idx_pelanggan_nama")
+  @@index([koderayon], map: "idx_pelanggan_koderayon")
+  @@index([wil], map: "idx_pelanggan_wil")
+  @@map("pelanggan")
+}
+
+// ---------------------------------------------------------------------------
+// Transaksi
+// ---------------------------------------------------------------------------
+enum StatusTiket {
+  DITERIMA
+  TERVERIFIKASI
+  DIJADWALKAN
+  DALAM_PERJALANAN
+  SELESAI
+  DITOLAK
+  DIBATALKAN
+}
+
+enum ArmadaStatus {
+  TERSEDIA
+  BERTUGAS
+  PERBAIKAN
+  NONAKTIF
+}
+
+enum SopirStatus {
+  TERSEDIA
+  BERTUGAS
+  CUTI
+  NONAKTIF
+}
+
+enum PenugasanStatus {
+  DIJADWALKAN
+  BERANGKAT
+  SELESAI
+  DIBATALKAN
+}
+
+enum OtpStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+}
+
+enum NotifJenis {
+  OTP
+  TIKET
+  UPDATE
+}
+
+enum KirimStatus {
+  TERKIRIM
+  GAGAL
+}
+
+model Tiket {
+  id             BigInt      @id @default(autoincrement())
+  noTiket        String      @unique @map("no_tiket") @db.VarChar(30)
+  noPelanggan    String      @map("no_pelanggan") @db.Char(9)
+  namaSnapshot   String?     @map("nama_snapshot") @db.VarChar(150)
+  alamatSnapshot String?     @map("alamat_snapshot") @db.VarChar(255)
+  wil            String?     @db.Char(2)
+  koderayon      String?     @map("koderayon") @db.VarChar(7)
+  noHp           String      @map("no_hp") @db.VarChar(20)
+  email          String?     @db.VarChar(150)
+  keluhan        String      @db.Text
+  status         StatusTiket @default(DITERIMA)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  riwayat    TiketRiwayat[]
+  penugasan  Penugasan[]
+  notifikasi NotifikasiLog[]
+
+  @@index([status])
+  @@index([noPelanggan])
+  @@index([noHp])
+  @@index([createdAt])
+  @@map("tiket")
+}
+
+model TiketRiwayat {
+  id           BigInt      @id @default(autoincrement())
+  tiketId      BigInt      @map("tiket_id")
+  tiket        Tiket       @relation(fields: [tiketId], references: [id], onDelete: Cascade)
+  status       StatusTiket
+  catatan      String?     @db.Text
+  operatorId   String?     @map("operator_id") @db.VarChar(64)
+  operatorNama String?     @map("operator_nama") @db.VarChar(150)
+  createdAt    DateTime    @default(now()) @map("created_at")
+
+  @@index([tiketId])
+  @@map("tiket_riwayat")
+}
+
+model OtpVerifikasi {
+  id          BigInt    @id @default(autoincrement())
+  noPelanggan String    @map("no_pelanggan") @db.Char(9)
+  email       String    @db.VarChar(150)
+  noHp        String    @map("no_hp") @db.VarChar(20)
+  keluhan     String    @db.Text
+  kodeHash    String    @map("kode_hash") @db.VarChar(255)
+  expiredAt   DateTime  @map("expired_at")
+  attempts    Int       @default(0)
+  status      OtpStatus @default(PENDING)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([noPelanggan, status])
+  @@map("otp_verifikasi")
+}
+
+model Konfigurasi {
+  key       String   @id @db.VarChar(100)
+  value     String   @db.Text
+  updatedBy String?  @map("updated_by") @db.VarChar(64)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("konfigurasi")
+}
+
+model NotifikasiLog {
+  id          BigInt      @id @default(autoincrement())
+  tiketId     BigInt?     @map("tiket_id")
+  tiket       Tiket?      @relation(fields: [tiketId], references: [id], onDelete: SetNull)
+  channel     String      @default("EMAIL") @db.VarChar(20)
+  jenis       NotifJenis
+  tujuan      String      @db.VarChar(150)
+  statusKirim KirimStatus @map("status_kirim")
+  error       String?     @db.Text
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  @@index([tiketId])
+  @@map("notifikasi_log")
+}
+
+model Kendaraan {
+  id             BigInt       @id @default(autoincrement())
+  nopol          String       @unique @db.VarChar(20)
+  merk           String?      @db.VarChar(100)
+  kapasitasLiter Int?         @map("kapasitas_liter")
+  status         ArmadaStatus @default(TERSEDIA)
+  aktif          Boolean      @default(true)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  penugasan Penugasan[]
+
+  @@map("kendaraan")
+}
+
+model Sopir {
+  id        BigInt      @id @default(autoincrement())
+  nama      String      @db.VarChar(150)
+  nik       String?     @unique @db.VarChar(30)
+  noHp      String?     @map("no_hp") @db.VarChar(20)
+  status    SopirStatus @default(TERSEDIA)
+  aktif     Boolean     @default(true)
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  penugasan Penugasan[]
+
+  @@map("sopir")
+}
+
+model Penugasan {
+  id            BigInt          @id @default(autoincrement())
+  tiketId       BigInt          @map("tiket_id")
+  tiket         Tiket           @relation(fields: [tiketId], references: [id])
+  kendaraanId   BigInt          @map("kendaraan_id")
+  kendaraan     Kendaraan       @relation(fields: [kendaraanId], references: [id])
+  sopirId       BigInt          @map("sopir_id")
+  sopir         Sopir           @relation(fields: [sopirId], references: [id])
+  jadwalMulai   DateTime        @map("jadwal_mulai")
+  jadwalSelesai DateTime?       @map("jadwal_selesai")
+  status        PenugasanStatus @default(DIJADWALKAN)
+  assignedBy    String?         @map("assigned_by") @db.VarChar(64)
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  // Catatan: anti double-booking ditegakkan lewat generated column + UNIQUE key
+  // di MySQL (lihat db/penugasan_guard.sql), tidak dapat diekspresikan di Prisma.
+  @@index([kendaraanId])
+  @@index([sopirId])
+  @@index([tiketId])
+  @@map("penugasan")
+}
