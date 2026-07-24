@@ -25,7 +25,12 @@ const schema = z.object({
 
 async function clientIp() {
   const h = await headers();
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
+  const xff = h.get("x-forwarded-for");
+  if (xff) {
+    const ips = xff.split(",").map((ip) => ip.trim());
+    return ips[ips.length - 1] || "unknown";
+  }
+  return h.get("x-real-ip") || "unknown";
 }
 
 export async function submitPermintaan(formData: FormData): Promise<FormState> {

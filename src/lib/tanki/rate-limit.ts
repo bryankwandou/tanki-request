@@ -1,8 +1,11 @@
 // Rate limiter sederhana berbasis in-memory sliding window (anti-bot/spam, FR-08).
 // Cukup untuk satu instance / scaffold. Produksi multi-instance → pindah ke Redis.
+import { LRUCache } from "lru-cache";
 
 type Hit = number[]; // daftar timestamp (ms)
-const store = new Map<string, Hit>();
+
+// Bounded store to prevent unbounded memory leak from IP spoofing
+const store = new LRUCache<string, Hit>({ max: 5000 });
 
 export type RateResult = { allowed: boolean; remaining: number; retryAfterMs: number };
 
