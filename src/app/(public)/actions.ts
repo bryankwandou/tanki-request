@@ -2,7 +2,7 @@
 
 import { getConfig } from "@/lib/tanki/config";
 import { createPendingRequest, resendPendingOtp, verifyPendingOtp } from "@/lib/tanki/otp";
-import { rateLimit } from "@/lib/tanki/rate-limit";
+import { extractClientIp, rateLimit } from "@/lib/tanki/rate-limit";
 import { createTiket } from "@/lib/tanki/tiket";
 import { headers } from "next/headers";
 import { z } from "zod";
@@ -25,12 +25,10 @@ const schema = z.object({
 
 async function clientIp() {
   const h = await headers();
-  const xff = h.get("x-forwarded-for");
-  if (xff) {
-    const ips = xff.split(",").map((ip) => ip.trim());
-    return ips[ips.length - 1] || "unknown";
-  }
-  return h.get("x-real-ip") || "unknown";
+  return extractClientIp(
+    h.get("x-forwarded-for"),
+    h.get("x-real-ip"),
+  );
 }
 
 export async function submitPermintaan(formData: FormData): Promise<FormState> {
@@ -46,12 +44,12 @@ export async function submitPermintaan(formData: FormData): Promise<FormState> {
 
   const cfg = await getConfig();
 
-  // Anti-bot/spam (FR-08/09).
+  // Anti-bot/spam (FR-08/09) — per-IP + per-customer limits.
   const ip = await clientIp();
-  if (!rateLimit(`ip:${ip}`, 5, 10 * 60_000).allowed)
+  if (!(await rateLimit(`submit:ip:${ip}`, 5, 10 * 60_000)).allowed)
     return { status: "error", error: "Terlalu banyak permintaan dari jaringan Anda. Coba lagi nanti." };
   const perHour = Number(cfg.rate_limit_per_hour) || 3;
-  if (!rateLimit(`cust:${data.noPelanggan}`, perHour, 60 * 60_000).allowed)
+  if (!(await rateLimit(`submit:cust:${data.noPelanggan}`, perHour, 60 * 60_000)).allowed)
     return { status: "error", error: "Terlalu banyak permintaan untuk Nomor Pelanggan ini. Coba lagi nanti." };
 
   // OTP = pertahanan utama: laporan baru dibuat setelah email diverifikasi.
@@ -72,11 +70,19 @@ export async function verifyOtp(formData: FormData): Promise<FormState> {
   const code = String(formData.get("code") ?? "").trim();
   if (!code) return { status: "otp", otpId, error: "Masukkan kode verifikasi." };
 
+  // Rate-limit OTP verify: max 10 attempts per otpId per 10 menit
+  if (!(await rateLimit(`otp:verify:${otpId}`, 10, 10 * 60_000)).allowed)
+    return { status: "otp", otpId, error: "Terlalu banyak percobaan verifikasi. Coba lagi nanti." };
+
   const r = await verifyPendingOtp(otpId, code);
   if (!r.ok) return { status: "otp", otpId, error: r.error };
   return { status: "done", noTiket: r.noTiket };
 }
 
 export async function resendOtp(otpId: string): Promise<{ ok: boolean; error?: string }> {
+  // Rate-limit OTP resend: max 3 resend per otpId per 10 menit
+  if (!(await rateLimit(`otp:resend:${otpId}`, 3, 10 * 60_000)).allowed)
+    return { ok: false, error: "Terlalu banyak permintaan kirim ulang. Tunggu beberapa menit." };
+
   return resendPendingOtp(otpId);
 }
