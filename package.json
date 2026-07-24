@@ -24,6 +24,7 @@
     "clsx": "^2.1.1",
     "dayjs": "^1.11.13",
     "flatpickr": "^4.6.13",
+    "ioredis": "^5.11.1",
     "jsvectormap": "^1.6.0",
     "lru-cache": "^11.0.0",
     "mariadb": "^3.4.2",
