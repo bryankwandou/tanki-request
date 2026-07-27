@@ -18,8 +18,17 @@ export function UserInfo() {
 
   async function handleLogout() {
     setIsOpen(false);
-    const loadingId = toast.loading("Keluar...");
+    const loadingId = toast.loading("Keluar dari sesi PDAM...");
     try {
+      const res = await fetch("/api/auth/keycloak-logout");
+      const data = await res.json();
+      await signOut({ redirect: false });
+      if (data?.url) {
+        window.location.href = data.url;
+      } else {
+        window.location.href = "/auth/sign-in";
+      }
+    } catch {
       await signOut({ callbackUrl: "/auth/sign-in" });
     } finally {
       toast.dismiss(loadingId);
