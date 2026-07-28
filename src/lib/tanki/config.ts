@@ -1,21 +1,15 @@
 import { db } from "@/lib/db";
 
-// Kunci konfigurasi sistem + default. Disimpan di tabel `konfigurasi` (key/value string).
-export const CONFIG_DEFAULTS = {
-  smtp_host: "",
-  smtp_port: "587",
-  smtp_secure: "false", // "true" untuk port 465
-  smtp_user: "",
-  smtp_pass: "", // rahasia — tidak pernah dikirim balik ke UI
-  smtp_from: "noreply@pdam-makassar.go.id",
-  otp_enabled: "true", // OTP email = pertahanan utama validasi laporan
-  otp_ttl_minutes: "10",
-  otp_length: "6",
-  rate_limit_per_hour: "3",
-} as const;
+export {
+  CONFIG_DEFAULTS,
+  NUMERIC_BOUNDS,
+  SECRET_KEYS,
+  configNumber,
+  renderTemplate,
+  type ConfigKey,
+} from "@/lib/tanki/config-schema";
 
-export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
-export const SECRET_KEYS: ConfigKey[] = ["smtp_pass"];
+import { CONFIG_DEFAULTS, type ConfigKey } from "@/lib/tanki/config-schema";
 
 export async function getConfig(): Promise<Record<ConfigKey, string>> {
   const rows = await db.konfigurasi.findMany();

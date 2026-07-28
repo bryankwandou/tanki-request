@@ -11,9 +11,10 @@ PRD lengkap: [`PRD_TANKI_JENE.md`](./PRD_TANKI_JENE.md).
 > - Operator: dashboard agregat, pencarian pelanggan/permintaan, **detail tiket + ubah status** (verify/tolak/batal dgn alasan, role-gated).
 > - **Dispatch penuh**: master kendaraan & sopir, penugasan (assign → tiket DIJADWALKAN) dgn **guard anti double-booking** + rilis armada saat selesai/batal.
 > - **Notifikasi email** (tiket dibuat + setiap perubahan status) via SMTP yang dikonfigurasi admin; fallback log konsol bila SMTP kosong.
-> - **Konfigurasi admin**: SMTP (host/port/secure/user/pass write-only/from) + parameter OTP & rate-limit, dengan tombol "kirim email tes".
+> - **OTP email pada alur submit publik**: kode di-hash SHA-256, TTL & panjang & maks. percobaan diatur admin, tiket baru dibuat **setelah** kode terverifikasi. Kirim ulang dibatasi dan tidak memulihkan jatah percobaan.
+> - **Konfigurasi admin**: SMTP (host/port/secure/user/pass write-only/from), parameter OTP & rate-limit (di-clamp di sisi server), dan **template email** ketiga jenis notifikasi dengan placeholder, plus tombol "kirim email tes".
 >
-> Belum: penegakan OTP email pada alur submit publik, agregasi & ekspor Laporan, login Keycloak (instance VPS sedang down).
+> Belum: agregasi & ekspor Laporan, login Keycloak (instance VPS sedang down).
 
 ## Stack
 
@@ -78,6 +79,7 @@ node db/keycloak_local_setup.mjs        # buat realm DIAMOND, client tanki-jene,
 ## Verifikasi cepat
 
 ```bash
+npm test                      # unit test (vitest) — rate limiter, OTP, konfigurasi
 npm run build                 # harus sukses (TypeScript + bundle)
 # dengan dev jalan (pakai browser atau klien HTTP apa pun):
 #   /            → 200 (landing publik + form)

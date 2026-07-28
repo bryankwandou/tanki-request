@@ -48,9 +48,37 @@ export function KonfigurasiForm({ cfg, hasPass }: { cfg: Cfg; hasPass: boolean }
               <input type="checkbox" name="otp_enabled" defaultChecked={cfg.otp_enabled === "true"} />
               <span className="text-dark dark:text-dark-6">Aktifkan OTP email</span>
             </label>
-            <Field label="Masa berlaku OTP (menit)" name="otp_ttl_minutes" def={cfg.otp_ttl_minutes} />
-            <Field label="Panjang kode OTP" name="otp_length" def={cfg.otp_length} />
-            <Field label="Maks. permintaan / jam / pelanggan" name="rate_limit_per_hour" def={cfg.rate_limit_per_hour} />
+            <Field label="Masa berlaku OTP (menit, 1–60)" name="otp_ttl_minutes" def={cfg.otp_ttl_minutes} />
+            <Field label="Panjang kode OTP (4–8)" name="otp_length" def={cfg.otp_length} />
+            <Field
+              label="Maks. percobaan salah per permintaan (3–10)"
+              name="otp_max_attempts"
+              def={cfg.otp_max_attempts}
+            />
+            <Field label="Maks. permintaan / jam / pelanggan (1–20)" name="rate_limit_per_hour" def={cfg.rate_limit_per_hour} />
+          </div>
+          <p className="mt-3 text-sm text-dark-5 dark:text-dark-6">
+            Batas percobaan dihitung untuk seluruh umur satu permintaan dan{" "}
+            <strong>tidak pulih saat pengguna meminta kode baru</strong>. Nilai di luar rentang
+            yang tertulis akan disesuaikan otomatis ke batas terdekat saat disimpan.
+          </p>
+        </section>
+
+        {/* Template email */}
+        <section className="rounded-[10px] bg-white p-6 shadow-1 dark:bg-gray-dark">
+          <h2 className="mb-1 text-body-lg font-bold text-dark dark:text-white">Template Email</h2>
+          <p className="mb-4 text-sm text-dark-5 dark:text-dark-6">
+            Placeholder yang tersedia: <code>{"{{kode}}"}</code> <code>{"{{ttl}}"}</code>{" "}
+            <code>{"{{no_tiket}}"}</code> <code>{"{{status}}"}</code> <code>{"{{alasan}}"}</code>.
+            Kosongkan sebuah kolom untuk mengembalikannya ke teks bawaan.
+          </p>
+          <div className="grid gap-4">
+            <Field label="Subjek — OTP" name="tpl_otp_subject" def={cfg.tpl_otp_subject} />
+            <TextArea label="Isi — OTP" name="tpl_otp_body" def={cfg.tpl_otp_body} />
+            <Field label="Subjek — tiket dibuat" name="tpl_tiket_subject" def={cfg.tpl_tiket_subject} />
+            <TextArea label="Isi — tiket dibuat" name="tpl_tiket_body" def={cfg.tpl_tiket_body} />
+            <Field label="Subjek — perubahan status" name="tpl_status_subject" def={cfg.tpl_status_subject} />
+            <TextArea label="Isi — perubahan status" name="tpl_status_body" def={cfg.tpl_status_body} />
           </div>
         </section>
 
@@ -90,6 +118,15 @@ function Field({ label, name, def, placeholder }: { label: string; name: string;
     <label className="flex flex-col gap-1 text-sm">
       <span className="text-dark-5 dark:text-dark-6">{label}</span>
       <input name={name} defaultValue={def} placeholder={placeholder} className={cls} />
+    </label>
+  );
+}
+
+function TextArea({ label, name, def }: { label: string; name: string; def?: string }) {
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-dark-5 dark:text-dark-6">{label}</span>
+      <textarea name={name} defaultValue={def} rows={4} className={`${cls} font-mono`} />
     </label>
   );
 }

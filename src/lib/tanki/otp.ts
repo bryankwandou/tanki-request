@@ -1,10 +1,10 @@
 import crypto from "node:crypto";
 import { db } from "@/lib/db";
-import { getConfig } from "@/lib/tanki/config";
+import { configNumber, getConfig } from "@/lib/tanki/config";
 import { notifyOtp } from "@/lib/tanki/notify";
 import {
+  DEFAULT_RESEND_LIMITS,
   evaluateResendGate,
-  MAX_ATTEMPTS,
   THROTTLE,
   TOO_MANY,
   VERIFY_FAILED,
@@ -56,8 +56,8 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
     return { ok: false, error: `Masih ada permintaan aktif (${aktif.noTiket}). Mohon tunggu hingga selesai.` };
 
   const cfg = await getConfig();
-  const length = Number(cfg.otp_length) || 6;
-  const ttl = Number(cfg.otp_ttl_minutes) || 10;
+  const length = configNumber(cfg, "otp_length");
+  const ttl = configNumber(cfg, "otp_ttl_minutes");
   const code = genCode(length);
 
   // Hanya satu OTP aktif per pelanggan.
@@ -115,7 +115,11 @@ export async function verifyPendingOtp(
     await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
     return { ok: false, error: VERIFY_FAILED };
   }
-  if (row.attempts >= MAX_ATTEMPTS) {
+
+  // FR-30 — batas percobaan diatur admin, di-clamp 3–10 di sisi server.
+  const maxAttempts = configNumber(await getConfig(), "otp_max_attempts");
+
+  if (row.attempts >= maxAttempts) {
     await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
     return { ok: false, error: VERIFY_FAILED };
   }
@@ -161,7 +165,10 @@ export async function resendPendingOtp(
   );
   if (!byEmail.allowed) return { ok: false, error: TOO_MANY };
 
-  const gate = evaluateResendGate(row);
+  const gate = evaluateResendGate(row, Date.now(), {
+    ...DEFAULT_RESEND_LIMITS,
+    maxAttempts: configNumber(await getConfig(), "otp_max_attempts"),
+  });
   if (!gate.allow) {
     if (gate.expire) {
       await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
@@ -170,8 +177,8 @@ export async function resendPendingOtp(
   }
 
   const cfg = await getConfig();
-  const length = Number(cfg.otp_length) || 6;
-  const ttl = Number(cfg.otp_ttl_minutes) || 10;
+  const length = configNumber(cfg, "otp_length");
+  const ttl = configNumber(cfg, "otp_ttl_minutes");
   const code = genCode(length);
 
   // `attempts` SENGAJA tidak di-reset di sini — inilah inti perbaikan Issue #4.

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { getSmtpConfig } from "@/lib/tanki/config";
+import { CONFIG_DEFAULTS, getConfig, getSmtpConfig, renderTemplate, type ConfigKey } from "@/lib/tanki/config";
 import type { NotifJenis } from "@/generated/prisma/client";
 import nodemailer from "nodemailer";
 
@@ -61,46 +61,58 @@ export async function sendEmail({ to, subject, body, jenis, tiketId }: SendArgs)
   return { ok, skipped: false as const, error };
 }
 
-export function notifyTiketCreated(t: {
+/** Ambil template dari konfigurasi admin; kosong / belum diisi → default bawaan. */
+async function template(subjectKey: ConfigKey, bodyKey: ConfigKey) {
+  const cfg = await getConfig();
+  return {
+    subject: cfg[subjectKey] || CONFIG_DEFAULTS[subjectKey],
+    body: cfg[bodyKey] || CONFIG_DEFAULTS[bodyKey],
+  };
+}
+
+export async function notifyTiketCreated(t: {
   id: bigint;
   noTiket: string;
   email: string | null;
 }) {
+  const { subject, body } = await template("tpl_tiket_subject", "tpl_tiket_body");
+  const vars = { no_tiket: t.noTiket };
   return sendEmail({
     to: t.email,
     jenis: "TIKET",
     tiketId: t.id,
-    subject: `Permintaan mobil tangki diterima — ${t.noTiket}`,
-    body:
-      `Permintaan Anda telah kami terima dengan nomor tiket ${t.noTiket}.\n` +
-      `Pantau progres di portal Tanki Je'ne' dengan No. Pelanggan + No. HP Anda.`,
+    subject: renderTemplate(subject, vars),
+    body: renderTemplate(body, vars),
   });
 }
 
-export function notifyOtp(email: string, code: string, ttlMinutes: number) {
+export async function notifyOtp(email: string, code: string, ttlMinutes: number) {
+  const { subject, body } = await template("tpl_otp_subject", "tpl_otp_body");
+  const vars = { kode: code, ttl: String(ttlMinutes) };
   return sendEmail({
     to: email,
     jenis: "OTP",
-    subject: `Kode verifikasi permintaan Tanki Je'ne': ${code}`,
-    body:
-      `Kode verifikasi Anda: ${code}\n` +
-      `Masukkan kode ini di halaman permintaan untuk mengonfirmasi laporan Anda.\n` +
-      `Kode berlaku ${ttlMinutes} menit. Abaikan email ini bila Anda tidak mengajukan permintaan.`,
+    subject: renderTemplate(subject, vars),
+    body: renderTemplate(body, vars),
   });
 }
 
-export function notifyStatusChange(
+export async function notifyStatusChange(
   t: { id: bigint; noTiket: string; email: string | null },
   statusLabel: string,
   alasan?: string | null,
 ) {
+  const { subject, body } = await template("tpl_status_subject", "tpl_status_body");
+  const vars = {
+    no_tiket: t.noTiket,
+    status: statusLabel,
+    alasan: alasan ? `\nKeterangan: ${alasan}` : "",
+  };
   return sendEmail({
     to: t.email,
     jenis: "UPDATE",
     tiketId: t.id,
-    subject: `Update permintaan ${t.noTiket}: ${statusLabel}`,
-    body:
-      `Status permintaan ${t.noTiket} kini: ${statusLabel}.` +
-      (alasan ? `\nKeterangan: ${alasan}` : ""),
+    subject: renderTemplate(subject, vars),
+    body: renderTemplate(body, vars),
   });
 }
