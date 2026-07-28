@@ -1,0 +1,48 @@
+{
+  "name": "Tanki Je'ne' — dev + Docker",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22-bookworm",
+
+  // Docker-in-Docker: inilah yang menggantikan Docker Desktop lokal.
+  // MySQL, Mailpit, dan Keycloak dari docker-compose.yml jalan di dalam Codespace.
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": true
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+
+  "forwardPorts": [3000, 8025, 8080, 3306, 1025],
+  "portsAttributes": {
+    "3000": { "label": "Next.js app", "onAutoForward": "notify" },
+    "8025": { "label": "Mailpit (baca email OTP di sini)", "onAutoForward": "notify" },
+    "8080": { "label": "Keycloak", "onAutoForward": "silent" },
+    "3306": { "label": "MySQL", "onAutoForward": "silent" },
+    "1025": { "label": "SMTP Mailpit", "onAutoForward": "silent" }
+  },
+
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Prisma.prisma",
+        "bradlc.vscode-tailwindcss",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "Anthropic.claude-code"
+      ]
+    }
+  },
+
+  // Codespace 2-core cukup untuk Next dev, tapi MySQL + Keycloak sekaligus
+  // lebih lega di 4-core.
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+
+  "remoteUser": "node"
+}
