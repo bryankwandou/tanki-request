@@ -2,10 +2,10 @@ import crypto from "node:crypto";
 import { db } from "@/lib/db";
 import { getConfig } from "@/lib/tanki/config";
 import { notifyOtp } from "@/lib/tanki/notify";
+import { evaluateResendGate, MAX_ATTEMPTS, THROTTLE, TOO_MANY } from "@/lib/tanki/otp-policy";
+import { rateLimit } from "@/lib/tanki/rate-limit";
 import { ACTIVE_STATUSES } from "@/lib/tanki/status";
 import { createTiket } from "@/lib/tanki/tiket";
-
-const MAX_ATTEMPTS = 5;
 
 function genCode(len: number): string {
   let c = "";
@@ -65,7 +65,11 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
 
 export type VerifyResult = { ok: true; noTiket: string } | { ok: false; error: string };
 
-export async function verifyPendingOtp(otpId: string, code: string): Promise<VerifyResult> {
+export async function verifyPendingOtp(
+  otpId: string,
+  code: string,
+  clientIp = "unknown",
+): Promise<VerifyResult> {
   let id: bigint;
   try {
     id = BigInt(otpId);
@@ -73,9 +77,21 @@ export async function verifyPendingOtp(otpId: string, code: string): Promise<Ver
     return { ok: false, error: "Sesi verifikasi tidak valid." };
   }
 
+  // Throttle per-IP dijalankan SEBELUM query, supaya membanjiri endpoint dengan
+  // otpId acak pun tetap terbatas dan tidak menjadi beban database.
+  const byIp = await rateLimit(`otp:verify:ip:${clientIp}`, THROTTLE.verifyIp.max, THROTTLE.verifyIp.windowMs);
+  if (!byIp.allowed) return { ok: false, error: TOO_MANY };
+
   const row = await db.otpVerifikasi.findUnique({ where: { id } });
   if (!row || row.status !== "PENDING")
     return { ok: false, error: "Kode tidak ditemukan atau sudah dipakai. Silakan ajukan ulang." };
+
+  const byEmail = await rateLimit(
+    `otp:verify:email:${row.email.toLowerCase()}`,
+    THROTTLE.verifyEmail.max,
+    THROTTLE.verifyEmail.windowMs,
+  );
+  if (!byEmail.allowed) return { ok: false, error: TOO_MANY };
   if (row.expiredAt < new Date()) {
     await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
     return { ok: false, error: "Kode sudah kedaluwarsa. Minta kode baru." };
@@ -102,24 +118,53 @@ export async function verifyPendingOtp(otpId: string, code: string): Promise<Ver
   return { ok: true, noTiket: res.noTiket };
 }
 
-export async function resendPendingOtp(otpId: string): Promise<{ ok: boolean; error?: string }> {
+export async function resendPendingOtp(
+  otpId: string,
+  clientIp = "unknown",
+): Promise<{ ok: boolean; error?: string }> {
   let id: bigint;
   try {
     id = BigInt(otpId);
   } catch {
     return { ok: false, error: "Sesi verifikasi tidak valid." };
   }
+
+  const byIp = await rateLimit(`otp:resend:ip:${clientIp}`, THROTTLE.resendIp.max, THROTTLE.resendIp.windowMs);
+  if (!byIp.allowed) return { ok: false, error: TOO_MANY };
+
   const row = await db.otpVerifikasi.findUnique({ where: { id } });
   if (!row || row.status !== "PENDING")
     return { ok: false, error: "Tidak ada permintaan menunggu. Silakan ajukan ulang." };
+
+  const byEmail = await rateLimit(
+    `otp:resend:email:${row.email.toLowerCase()}`,
+    THROTTLE.resendEmail.max,
+    THROTTLE.resendEmail.windowMs,
+  );
+  if (!byEmail.allowed) return { ok: false, error: TOO_MANY };
+
+  const gate = evaluateResendGate(row);
+  if (!gate.allow) {
+    if (gate.expire) {
+      await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
+    }
+    return { ok: false, error: gate.error };
+  }
 
   const cfg = await getConfig();
   const length = Number(cfg.otp_length) || 6;
   const ttl = Number(cfg.otp_ttl_minutes) || 10;
   const code = genCode(length);
+
+  // `attempts` SENGAJA tidak di-reset di sini — inilah inti perbaikan Issue #4.
   await db.otpVerifikasi.update({
     where: { id },
-    data: { kodeHash: hash(code), expiredAt: new Date(Date.now() + ttl * 60_000), attempts: 0 },
+    data: {
+      kodeHash: hash(code),
+      expiredAt: new Date(Date.now() + ttl * 60_000),
+      resendCount: { increment: 1 },
+      lastSentAt: new Date(),
+    },
   });
   await notifyOtp(row.email, code, ttl);
   return { ok: true };

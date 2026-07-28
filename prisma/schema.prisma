@@ -124,11 +124,19 @@ model OtpVerifikasi {
   keluhan     String    @db.Text
   kodeHash    String    @map("kode_hash") @db.VarChar(255)
   expiredAt   DateTime  @map("expired_at")
+  // Percobaan verifikasi GAGAL sepanjang umur permintaan ini. Sengaja TIDAK
+  // di-reset saat kirim ulang — reset itulah yang membuat cap-nya bisa dilewati
+  // (Issue #4): 5 tebakan, kirim ulang, 5 tebakan lagi, tanpa batas.
   attempts    Int       @default(0)
+  // Berapa kali kode dikirim ulang untuk permintaan ini, dibatasi di server.
+  resendCount Int       @default(0) @map("resend_count")
+  // Waktu pengiriman kode terakhir, untuk jeda antar kirim ulang.
+  lastSentAt  DateTime  @default(now()) @map("last_sent_at")
   status      OtpStatus @default(PENDING)
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@index([noPelanggan, status])
+  @@index([email, status])
   @@map("otp_verifikasi")
 }
 

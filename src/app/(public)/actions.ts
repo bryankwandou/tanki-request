@@ -70,15 +70,14 @@ export async function verifyOtp(formData: FormData): Promise<FormState> {
   const code = String(formData.get("code") ?? "").trim();
   if (!code) return { status: "otp", otpId, error: "Masukkan kode verifikasi." };
 
-  // Throttle verify/resend adalah lingkup Issue #4 (attempt-cap bypass), bukan #5.
-  // Key per-otpId saja tidak cukup — penyerang cukup submit ulang untuk dapat
-  // otpId segar. Perlu key per-IP dan per-email; dikerjakan di MR terpisah.
-  const r = await verifyPendingOtp(otpId, code);
+  // Throttle per-IP + per-email ada di dalam verifyPendingOtp, tempat email
+  // permintaan diketahui. IP diresolusi di sini karena hanya server action yang
+  // punya akses ke headers().
+  const r = await verifyPendingOtp(otpId, code, await clientIp());
   if (!r.ok) return { status: "otp", otpId, error: r.error };
   return { status: "done", noTiket: r.noTiket };
 }
 
 export async function resendOtp(otpId: string): Promise<{ ok: boolean; error?: string }> {
-  // Lihat catatan di verifyOtp — throttle resend dikerjakan bersama Issue #4.
-  return resendPendingOtp(otpId);
+  return resendPendingOtp(otpId, await clientIp());
 }
