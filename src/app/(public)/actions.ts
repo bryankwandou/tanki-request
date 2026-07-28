@@ -70,19 +70,15 @@ export async function verifyOtp(formData: FormData): Promise<FormState> {
   const code = String(formData.get("code") ?? "").trim();
   if (!code) return { status: "otp", otpId, error: "Masukkan kode verifikasi." };
 
-  // Rate-limit OTP verify: max 10 attempts per otpId per 10 menit
-  if (!(await rateLimit(`otp:verify:${otpId}`, 10, 10 * 60_000)).allowed)
-    return { status: "otp", otpId, error: "Terlalu banyak percobaan verifikasi. Coba lagi nanti." };
-
+  // Throttle verify/resend adalah lingkup Issue #4 (attempt-cap bypass), bukan #5.
+  // Key per-otpId saja tidak cukup — penyerang cukup submit ulang untuk dapat
+  // otpId segar. Perlu key per-IP dan per-email; dikerjakan di MR terpisah.
   const r = await verifyPendingOtp(otpId, code);
   if (!r.ok) return { status: "otp", otpId, error: r.error };
   return { status: "done", noTiket: r.noTiket };
 }
 
 export async function resendOtp(otpId: string): Promise<{ ok: boolean; error?: string }> {
-  // Rate-limit OTP resend: max 3 resend per otpId per 10 menit
-  if (!(await rateLimit(`otp:resend:${otpId}`, 3, 10 * 60_000)).allowed)
-    return { ok: false, error: "Terlalu banyak permintaan kirim ulang. Tunggu beberapa menit." };
-
+  // Lihat catatan di verifyOtp — throttle resend dikerjakan bersama Issue #4.
   return resendPendingOtp(otpId);
 }
