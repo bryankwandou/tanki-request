@@ -5,7 +5,9 @@ declare module "next-auth" {
     user: {
       roles: string[];
     } & DefaultSession["user"];
-    idToken?: string;
+    // Tidak ada idToken di sini — objek Session disajikan apa adanya oleh
+    // GET /api/auth/session, jadi token tidak boleh sampai ke browser.
+    // Federated logout membacanya dari JWT di sisi server.
     error?: string;
   }
 }

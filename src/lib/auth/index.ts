@@ -2,6 +2,64 @@ import NextAuth from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import Keycloak from "next-auth/providers/keycloak";
 
+/** Diagnostik login hanya aktif bila diminta — lihat authDiag(). */
+const AUTH_DEBUG = process.env.AUTH_DEBUG === "1";
+
+/**
+ * Log diagnostik untuk jalur SUKSES. Dipagari flag karena identitas operator
+ * (username/email) tidak boleh tercatat di log setiap kali login — postur yang
+ * sama dengan Issue #7 soal kode OTP yang tertulis ke console.
+ * Log untuk jalur GAGAL tidak dipagari: itu justru yang diminta Issue #2, dan
+ * isinya tidak menyertakan identitas.
+ */
+function authDiag(...args: unknown[]) {
+  if (AUTH_DEBUG) console.info("[AUTH DIAGNOSTIC]", ...args);
+}
+
+/** Segmen JWT dikodekan base64url (`-`/`_`, tanpa padding), bukan base64 biasa. */
+function decodeJwtPayload(jwt: string): Record<string, unknown> {
+  const parts = jwt.split(".");
+  if (parts.length !== 3) {
+    throw new Error("Format access_token tidak memenuhi standar struktur JWT 3-bagian");
+  }
+  return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
+}
+
+/** Hanya role yang relevan dengan aplikasi ini yang disimpan ke sesi. */
+function filterTankiRoles(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null;
+  return raw.filter((r): r is string => typeof r === "string" && (r === "app-tanki" || r.startsWith("tanki-")));
+}
+
+/**
+ * Single-flight refresh.
+ *
+ * Callback jwt() jalan per request. Kalau beberapa request operator datang
+ * bersamaan saat token mendekati kedaluwarsa, semuanya akan POST ke endpoint
+ * token dengan refresh token yang sama. Keycloak dengan refresh token rotation
+ * aktif menginvalidasi refresh token lama begitu yang pertama sukses, sehingga
+ * sisanya dapat `invalid_grant` → RefreshTokenError → operator terlempar ke
+ * halaman login di tengah kerja.
+ *
+ * Map di bawah menahan Promise refresh yang sedang berjalan, di-key oleh refresh
+ * token, supaya request konkuren ikut menunggu hasil yang sama.
+ */
+const inFlightRefresh = new Map<string, Promise<JWT>>();
+
+async function refreshKeycloakTokenOnce(token: JWT): Promise<JWT> {
+  const key = token.refreshToken;
+  if (typeof key !== "string" || !key) return refreshKeycloakToken(token);
+
+  const existing = inFlightRefresh.get(key);
+  if (existing) return existing;
+
+  const pending = refreshKeycloakToken(token).finally(() => {
+    inFlightRefresh.delete(key);
+  });
+  inFlightRefresh.set(key, pending);
+  return pending;
+}
+
 /**
  * Memperbarui access_token dari Keycloak jika token saat ini mendekati kedaluwarsa.
  */
@@ -43,18 +101,11 @@ async function refreshKeycloakToken(token: JWT): Promise<JWT> {
     let updatedRoles = token.roles ?? [];
     if (refreshedTokens.access_token) {
       try {
-        const tokenParts = refreshedTokens.access_token.split(".");
-        if (tokenParts.length === 3) {
-          const payload = JSON.parse(
-            Buffer.from(tokenParts[1], "base64").toString("utf-8"),
-          );
-          const rawRoles = payload?.realm_access?.roles;
-          if (Array.isArray(rawRoles)) {
-            updatedRoles = rawRoles.filter(
-              (r) => r === "app-tanki" || r.startsWith("tanki-"),
-            );
-          }
-        }
+        const payload = decodeJwtPayload(refreshedTokens.access_token);
+        const roles = filterTankiRoles(
+          (payload?.realm_access as { roles?: unknown } | undefined)?.roles,
+        );
+        if (roles) updatedRoles = roles;
       } catch (error) {
         console.error(
           "[AUTH DIAGNOSTIC] Gagal mendekode realm roles pada refreshed access_token:",
@@ -67,7 +118,7 @@ async function refreshKeycloakToken(token: JWT): Promise<JWT> {
       refreshedTokens.expires_at ??
       Math.floor(Date.now() / 1000 + (refreshedTokens.expires_in ?? 300));
 
-    console.info("[AUTH DIAGNOSTIC] Token Keycloak berhasil diperbarui untuk sesi operator.");
+    authDiag("Token Keycloak berhasil diperbarui untuk sesi operator.");
 
     return {
       ...token,
@@ -114,29 +165,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         if (account.access_token) {
           try {
-            const tokenParts = account.access_token.split(".");
-            if (tokenParts.length !== 3) {
-              throw new Error(
-                "Format access_token tidak memenuhi standar struktur JWT 3-bagian",
-              );
-            }
-            const payload = JSON.parse(
-              Buffer.from(tokenParts[1], "base64").toString("utf-8"),
+            const payload = decodeJwtPayload(account.access_token);
+            const roles = filterTankiRoles(
+              (payload?.realm_access as { roles?: unknown } | undefined)?.roles,
             );
-            const rawRoles = payload?.realm_access?.roles;
 
-            if (!Array.isArray(rawRoles)) {
+            if (roles === null) {
+              // Jalur GAGAL — tidak dipagari flag, dan tanpa identitas operator.
               console.warn(
                 "[AUTH DIAGNOSTIC] realm_access.roles tidak ditemukan di dalam access_token. Periksa konfigurasi mapper client scope pada Keycloak.",
               );
               token.roles = [];
             } else {
-              token.roles = rawRoles.filter(
-                (r) => r === "app-tanki" || r.startsWith("tanki-"),
-              );
-              console.info(
-                `[AUTH DIAGNOSTIC] Login sukses untuk akun: ${payload.preferred_username || payload.email || "Operator"} | Roles terotentikasi: ${JSON.stringify(token.roles)}`,
-              );
+              token.roles = roles;
+              // Role saja, tanpa username/email — lihat catatan di authDiag().
+              authDiag("Login sukses. Roles terotentikasi:", roles);
             }
           } catch (error) {
             console.error(
@@ -159,13 +202,16 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return token;
       }
 
-      return await refreshKeycloakToken(token);
+      return await refreshKeycloakTokenOnce(token);
     },
     async session({ session, token }) {
       if (session.user) {
         session.user.roles = (token.roles as string[]) ?? [];
       }
-      session.idToken = (token.idToken as string) ?? undefined;
+      // idToken SENGAJA tidak dimasukkan ke session. Apa pun yang dikembalikan
+      // callback ini disajikan oleh GET /api/auth/session dan terbaca JavaScript
+      // klien mana pun. Federated logout membacanya dari JWT di sisi server —
+      // lihat src/app/api/auth/keycloak-logout/route.ts.
       session.error = (token.error as string) ?? undefined;
       return session;
     },

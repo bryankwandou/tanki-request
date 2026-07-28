@@ -87,6 +87,12 @@ AUTH_KEYCLOAK_ISSUER="https://diamond.pdammakassar.co.id/auth/realms/DIAMOND"
 ```
 *Catatan: Pada pengembangan lokal via Docker, `AUTH_KEYCLOAK_ISSUER` bernilai `http://localhost:8080/realms/DIAMOND`.*
 
+Opsional, untuk mendiagnosis masalah role saat login:
+```ini
+AUTH_DEBUG="1"   # cetak role hasil autentikasi ke console
+```
+Biarkan tidak diset di produksi. Log jalur **gagal** (mis. `realm_access.roles` tidak ditemukan) tetap muncul tanpa flag ini karena tidak memuat identitas operator; yang dipagari hanya log jalur sukses.
+
 ### 2. Prosedur Provisioning Client
 Untuk mendaftarkan atau memutakhirkan client confidential `tanki-jene` di realm produksi, jalankan skrip otentikasi admin:
 ```bash
