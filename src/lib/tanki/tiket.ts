@@ -77,6 +77,8 @@ export async function createTiket(
             tiketId: tiket.id,
             status: "DITERIMA",
             catatan: "Permintaan diterima sistem.",
+            // Catatan sistem memang untuk dibaca pelapor (Issue #6).
+            catatanPublik: true,
           },
         });
         return tiket;

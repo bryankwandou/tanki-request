@@ -122,6 +122,27 @@ dan `pelanggan` — yang dihapus hanya kredensial sistem, bukan anonimisasi.
 > `AUTH_KEYCLOAK_ISSUER` & `AUTH_KEYCLOAK_SECRET` di `.env` ke nilai produksi
 > (lihat blok komentar di `.env`) dan provisioning via `db/keycloak_setup_tanki_client.mjs`.
 
+### Tautan lacak & catatan publik/internal (Issue #6)
+
+Email "permintaan diterima" memuat tautan lacak bertanda tangan HMAC yang
+berlaku **14 hari**, sehingga pelapor tidak perlu mengetik No. Pelanggan + No. HP
+— dua nilai yang justru menjadi permukaan enumerasi. Nomor tiket ikut
+ditandatangani, jadi tautan tidak bisa diubah untuk membuka tiket orang lain.
+
+```ini
+TRACKING_LINK_SECRET=""   # opsional; bila kosong memakai AUTH_SECRET
+```
+
+Catatan operator kini punya penanda publik/internal (`tiket_riwayat.catatan_publik`),
+bukan sekadar disembunyikan dari tampilan:
+
+- Default kolomnya `false`, sehingga baris lama tetap tersembunyi setelah migrasi.
+- Di form ubah status, checkbox "Tampilkan catatan ini kepada pelanggan"
+  tercentang secara default agar alasan penolakan tetap sampai ke pelapor.
+- Catatan yang ditandai internal **tidak ikut dikirim lewat email** — tanpa itu
+  penandanya tidak ada artinya, karena catatan tetap sampai ke kotak masuk
+  pelapor meski disembunyikan di `/lacak`.
+
 ## Verifikasi cepat
 
 ```bash

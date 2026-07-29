@@ -1,4 +1,5 @@
 import { extractClientIp, rateLimit } from "@/lib/tanki/rate-limit";
+import { verifyTrackingToken } from "@/lib/tanki/tracking-link";
 import { db } from "@/lib/db";
 import { STATUS_LABEL } from "@/lib/tanki/status";
 import type { StatusTiket } from "@/generated/prisma/client";
@@ -19,7 +20,7 @@ const PCT: Record<StatusTiket, number> = {
 };
 const STOPPED: StatusTiket[] = ["DITOLAK", "DIBATALKAN"];
 
-type Search = { nop?: string; hp?: string };
+type Search = { nop?: string; hp?: string; t?: string };
 
 const inputClass =
   "w-full rounded-xl border border-[#cbd5e1] bg-white px-4 py-3 text-[#0a2540] outline-none transition focus:border-[#0284c7] focus:ring-2 focus:ring-[#0284c7]/20";
@@ -29,12 +30,21 @@ export default async function LacakPage({
 }: {
   searchParams: Promise<Search>;
 }) {
-  const { nop, hp } = await searchParams;
+  const { nop, hp, t } = await searchParams;
+
+  // Tautan bertanda tangan dari email (Issue #6): pelapor tidak perlu mengetik
+  // apa pun, dan jalur ini tidak bisa dipakai menebak tiket orang lain karena
+  // nomor tiketnya ikut ditandatangani.
+  const token = t ? verifyTrackingToken(t) : null;
+  const tokenNoTiket = token?.ok ? token.noTiket : null;
+  const tokenExpired = token !== null && !token.ok && token.reason === "expired";
+  const tokenInvalid = token !== null && !token.ok && token.reason === "invalid";
+
   const hasQuery = Boolean(nop && hp);
 
   // Rate limit: /lacak searches — max 30 per IP per 10 menit (FR-08 extension)
   let rateLimited = false;
-  if (hasQuery) {
+  if (hasQuery || tokenNoTiket) {
     const h = await headers();
     const ip = extractClientIp(h.get("x-forwarded-for"), h.get("x-real-ip"));
     const rl = await rateLimit(`lacak:ip:${ip}`, 30, 10 * 60_000);
@@ -46,10 +56,14 @@ export default async function LacakPage({
   const hpValid = !hp || /^0\d{8,13}$/.test(hp);
   const inputValid = nopValid && hpValid;
 
+  const where = tokenNoTiket
+    ? { noTiket: tokenNoTiket }
+    : { noPelanggan: nop, noHp: hp };
+
   const tiket =
-    hasQuery && !rateLimited && inputValid
+    (tokenNoTiket || hasQuery) && !rateLimited && inputValid
       ? await db.tiket.findMany({
-          where: { noPelanggan: nop, noHp: hp },
+          where,
           orderBy: { createdAt: "desc" },
           // Only expose fields the public needs — exclude operator notes (catatan)
           include: {
@@ -59,7 +73,10 @@ export default async function LacakPage({
                 id: true,
                 status: true,
                 createdAt: true,
-                // catatan (operator note) is intentionally NOT selected here
+                // Catatan hanya ikut bila operator menandainya publik (Issue #6).
+                // Kolom penandanya ikut diambil supaya render tidak perlu menebak.
+                catatan: true,
+                catatanPublik: true,
               },
             },
           },
@@ -103,13 +120,26 @@ export default async function LacakPage({
         </div>
       )}
 
+      {tokenExpired && (
+        <div className="mt-6 rounded-2xl border border-[#fde68a] bg-[#fffbeb] p-5 text-center text-sm text-[#92400e]">
+          Tautan lacak pada email Anda sudah kedaluwarsa. Silakan lacak dengan
+          No. Pelanggan dan No. HP di atas.
+        </div>
+      )}
+
+      {tokenInvalid && (
+        <div className="mt-6 rounded-2xl border border-[#fee2e2] bg-[#fff1f2] p-5 text-center text-sm text-[#b91c1c]">
+          Tautan lacak tidak valid. Silakan lacak dengan No. Pelanggan dan No. HP di atas.
+        </div>
+      )}
+
       {!inputValid && hasQuery && (
         <div className="mt-6 rounded-2xl border border-[#fee2e2] bg-[#fff1f2] p-5 text-center text-sm text-[#b91c1c]">
           Format No. Pelanggan atau No. HP tidak valid.
         </div>
       )}
 
-      {hasQuery && !rateLimited && inputValid && (
+      {(tokenNoTiket || hasQuery) && !rateLimited && inputValid && (
         <div className="mt-6 space-y-5">
           {tiket.length === 0 ? (
             <div className="rounded-2xl border border-[#e0f2fe] bg-white p-8 text-center text-[#0a2540]/60 shadow-sm">
@@ -150,6 +180,9 @@ export default async function LacakPage({
                           <div>
                             <div className="text-sm font-semibold text-[#0a2540]">{STATUS_LABEL[r.status]}</div>
                             <div className="text-xs text-[#0a2540]/50">{r.createdAt.toLocaleString("id-ID")}</div>
+                            {r.catatanPublik && r.catatan && (
+                              <p className="mt-1 text-sm text-[#0a2540]/70">{r.catatan}</p>
+                            )}
                           </div>
                         </li>
                       ))}

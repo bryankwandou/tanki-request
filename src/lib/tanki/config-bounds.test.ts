@@ -103,7 +103,11 @@ describe("renderTemplate — placeholder template email", () => {
       renderTemplate(CONFIG_DEFAULTS.tpl_otp_subject, { kode: "123456", ttl: "10" }),
       renderTemplate(CONFIG_DEFAULTS.tpl_otp_body, { kode: "123456", ttl: "10" }),
       renderTemplate(CONFIG_DEFAULTS.tpl_tiket_subject, { no_tiket: "TJ-1" }),
-      renderTemplate(CONFIG_DEFAULTS.tpl_tiket_body, { no_tiket: "TJ-1" }),
+      // tracking_url ditambahkan oleh Issue #6 — tautan lacak di email tiket baru.
+      renderTemplate(CONFIG_DEFAULTS.tpl_tiket_body, {
+        no_tiket: "TJ-1",
+        tracking_url: "http://localhost:3000/lacak?t=xxx",
+      }),
       renderTemplate(CONFIG_DEFAULTS.tpl_status_subject, { no_tiket: "TJ-1", status: "Selesai", alasan: "" }),
       renderTemplate(CONFIG_DEFAULTS.tpl_status_body, { no_tiket: "TJ-1", status: "Selesai", alasan: "" }),
     ];

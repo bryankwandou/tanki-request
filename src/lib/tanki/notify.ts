@@ -8,6 +8,7 @@ import {
   resolveDelivery,
   shouldLogBody,
 } from "@/lib/tanki/notify-policy";
+import { trackingUrl } from "@/lib/tanki/tracking-link";
 import nodemailer from "nodemailer";
 
 type SendArgs = {
@@ -95,7 +96,24 @@ export async function sendEmail({ to, subject, body, jenis, tiketId }: SendArgs)
   return { ok, skipped: false as const, error };
 }
 
-/** Ambil template dari konfigurasi admin; kosong / belum diisi → default bawaan. */
+
+/**
+ * Tautan lacak untuk email (Issue #6). Kegagalan menandatangani — praktisnya
+ * hanya terjadi bila AUTH_SECRET/TRACKING_LINK_SECRET tidak diset — tidak boleh
+ * menggagalkan pengiriman email tiketnya; pelapor masih bisa melacak manual.
+ */
+function safeTrackingUrl(noTiket: string): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL?.trim() || process.env.AUTH_URL?.trim();
+  if (!base) return "";
+  try {
+    return trackingUrl(noTiket, base);
+  } catch {
+    console.warn("[NOTIFIKASI] Tautan lacak tidak bisa dibuat — periksa TRACKING_LINK_SECRET/AUTH_SECRET.");
+    return "";
+  }
+}
+
+/** Ambil template dari konfigurasi admin; kosong / belum diisi → default bawaan. */
 async function template(subjectKey: ConfigKey, bodyKey: ConfigKey) {
   const cfg = await getConfig();
   return {
@@ -110,7 +128,7 @@ export async function notifyTiketCreated(t: {
   email: string | null;
 }) {
   const { subject, body } = await template("tpl_tiket_subject", "tpl_tiket_body");
-  const vars = { no_tiket: t.noTiket };
+  const vars = { no_tiket: t.noTiket, tracking_url: safeTrackingUrl(t.noTiket) };
   return sendEmail({
     to: t.email,
     jenis: "TIKET",

@@ -31,7 +31,8 @@ export const CONFIG_DEFAULTS = {
   tpl_tiket_subject: "Permintaan mobil tangki diterima — {{no_tiket}}",
   tpl_tiket_body:
     "Permintaan Anda telah kami terima dengan nomor tiket {{no_tiket}}.\n" +
-    "Pantau progres di portal Tanki Je'ne' dengan No. Pelanggan + No. HP Anda.",
+    "Pantau progres lewat tautan berikut:\n{{tracking_url}}\n" +
+    "Tautan berlaku 14 hari. Setelah itu, lacak dengan No. Pelanggan + No. HP Anda.",
   tpl_status_subject: "Update permintaan {{no_tiket}}: {{status}}",
   tpl_status_body: "Status permintaan {{no_tiket}} kini: {{status}}.{{alasan}}",
 } as const;
