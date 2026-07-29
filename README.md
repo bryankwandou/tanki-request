@@ -12,8 +12,9 @@ PRD lengkap: [`PRD_TANKI_JENE.md`](./PRD_TANKI_JENE.md).
 > - **Dispatch penuh**: master kendaraan & sopir, penugasan (assign → tiket DIJADWALKAN) dgn **guard anti double-booking** + rilis armada saat selesai/batal.
 > - **Notifikasi email** (tiket dibuat + setiap perubahan status) via SMTP yang dikonfigurasi admin; fallback log konsol bila SMTP kosong.
 > - **Konfigurasi admin**: SMTP (host/port/secure/user/pass write-only/from) + parameter OTP & rate-limit, dengan tombol "kirim email tes".
+> - **Laporan** (FR-45..47): agregasi per status/wilayah/rayon atas rentang tanggal, filter, grafik, dan ekspor CSV + Excel.
 >
-> Belum: penegakan OTP email pada alur submit publik, agregasi & ekspor Laporan, login Keycloak (instance VPS sedang down).
+> Belum: penegakan OTP email pada alur submit publik, login Keycloak (instance VPS sedang down).
 
 ## Stack
 
@@ -85,6 +86,27 @@ npm run build                 # harus sukses (TypeScript + bundle)
 #   /auth/sign-in→ 200 (login operator)
 #   /dashboard   → 302 → /auth/sign-in (terproteksi)
 ```
+
+## Laporan (FR-45..47)
+
+`/dashboard/laporan` menampilkan rekap permintaan atas rentang tanggal, dengan
+filter status, wilayah, dan rayon. Beberapa keputusan yang perlu diketahui:
+
+- **Dimensi terbatas pada wilayah + rayon.** Master `pelanggan` tidak memuat
+  cabang/golongan/tarif, dan snapshot di `tiket` hanya menyalin yang ada di master.
+- **Pengelompokan memakai kolom snapshot di `tiket`,** bukan join hidup ke
+  `pelanggan`. Pelanggan yang pindah rayon tidak mengubah laporan periode lalu.
+- **Tanggal dihitung menurut WITA,** bukan zona server, supaya "1 Juli" berarti
+  1 Juli bagi operator meski aplikasi berjalan di container ber-TZ UTC.
+- **Tanggal akhir inklusif.** Rentang maksimum 366 hari; permintaan yang lebih
+  lebar dipotong dari sisi tanggal awal.
+- **Ekspor CSV & Excel** (`/dashboard/laporan/export?format=csv|xlsx`) memakai
+  filter yang sama persis dengan layar, jadi jumlah barisnya selalu sama dengan
+  angka Total. Berkas Excel menyertakan lembar `Filter` berisi parameter yang
+  menghasilkannya.
+- **Ekspor terbuka untuk `tanki-operator-readonly`.** Peran itu Direksi/monitoring
+  dan laporan periodik justru pekerjaannya; berkasnya tidak memuat apa pun yang
+  tidak sudah terlihat di layar bagi peran yang sama.
 
 ## Struktur penting
 
