@@ -9,6 +9,7 @@ import {
   type ConfigKey,
 } from "@/lib/tanki/config";
 import { sendEmail } from "@/lib/tanki/notify";
+import { SecretKeyMissingError } from "@/lib/tanki/secret";
 import { revalidatePath } from "next/cache";
 
 export type ActionState = { ok: boolean; message?: string; error?: string };
@@ -70,7 +71,14 @@ export async function saveKonfigurasi(
   const pass = str("smtp_pass");
   if (pass) entries.smtp_pass = pass;
 
-  await setConfig(entries, session?.user?.email);
+  try {
+    await setConfig(entries, session?.user?.email);
+  } catch (e) {
+    // Paling mungkin: CONFIG_ENCRYPTION_KEY belum diset saat admin mengisi
+    // password SMTP. Pesannya sudah menjelaskan cara membuat kuncinya.
+    if (e instanceof SecretKeyMissingError) return { ok: false, error: e.message };
+    throw e;
+  }
   revalidatePath("/dashboard/konfigurasi");
   return { ok: true, message: "Konfigurasi tersimpan." };
 }

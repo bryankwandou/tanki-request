@@ -72,6 +72,34 @@ node db/keycloak_local_setup.mjs        # buat realm DIAMOND, client tanki-jene,
 - **Email uji**: SMTP diarahkan ke Mailpit (`127.0.0.1:1025`); lihat email masuk di
   **http://localhost:8025**. Admin Keycloak lokal: `admin` / `admin` (`http://localhost:8080`).
 
+### Password SMTP disimpan terenkripsi
+
+Password SMTP tidak lagi tersimpan cleartext di tabel `konfigurasi` (Issue #7).
+Ia dienkripsi AES-256-GCM dengan kunci dari environment:
+
+```bash
+openssl rand -base64 32   # → CONFIG_ENCRYPTION_KEY di .env
+```
+
+Kuncinya sengaja hanya ada di environment dan tidak pernah masuk database, agar
+salinan dump `.sql` — yang di proyek ini rutin dipindah-pindah untuk master
+`pelanggan` — tidak sekalian membawa kredensial mail yang bisa dipakai.
+
+Konsekuensi yang perlu diketahui:
+
+- Tanpa `CONFIG_ENCRYPTION_KEY`, form konfigurasi menolak menyimpan password
+  SMTP dan halamannya menampilkan peringatan merah.
+- Mengganti kunci membuat password lama tidak terbaca; pengiriman email berhenti
+  sampai admin mengisi ulang password lewat `/dashboard/konfigurasi`.
+- Baris lama yang masih cleartext tetap berfungsi dan ikut terenkripsi sendiri
+  begitu admin menyimpan ulang.
+
+Di **produksi tanpa SMTP terkonfigurasi, pengiriman email gagal terang-terangan**
+dan tercatat di `notifikasi_log` — tidak lagi diam-diam "berhasil" dengan
+mencetak isi email (termasuk kode OTP hidup) ke log container. Fallback console
+hanya ada di luar produksi, dan kode OTP tetap tidak dicetak kecuali
+`OTP_DEBUG_LOG=1` diset sadar-sadar; jalur normalnya adalah membaca Mailpit.
+
 > Saat instance produksi `DIAMOND` di VPS hidup kembali, cukup ganti
 > `AUTH_KEYCLOAK_ISSUER` & `AUTH_KEYCLOAK_SECRET` di `.env` ke nilai produksi
 > (lihat blok komentar di `.env`) dan provisioning via `db/keycloak_setup_tanki_client.mjs`.

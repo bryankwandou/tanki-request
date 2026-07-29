@@ -1,6 +1,13 @@
 import { db } from "@/lib/db";
 import { CONFIG_DEFAULTS, getConfig, getSmtpConfig, renderTemplate, type ConfigKey } from "@/lib/tanki/config";
 import type { NotifJenis } from "@/generated/prisma/client";
+import {
+  NO_SMTP_ERROR,
+  maskRecipient,
+  readDeliveryEnv,
+  resolveDelivery,
+  shouldLogBody,
+} from "@/lib/tanki/notify-policy";
 import nodemailer from "nodemailer";
 
 type SendArgs = {
@@ -23,20 +30,35 @@ export async function sendEmail({ to, subject, body, jenis, tiketId }: SendArgs)
   let error: string | null = null;
   try {
     const smtp = await getSmtpConfig();
-    if (smtp) {
-      // --- transport: SMTP (dikonfigurasi admin) ---
-      const transport = nodemailer.createTransport({
-        host: smtp.host,
-        port: smtp.port,
-        secure: smtp.secure,
-        auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
-      });
-      await transport.sendMail({ from: smtp.from, to, subject, text: body });
-    } else {
-      // --- fallback: console (SMTP belum dikonfigurasi) ---
-      console.log(
-        `\n[EMAIL→${to}] (${jenis}) ${subject}\n${body}\n(SMTP belum dikonfigurasi — set di /dashboard/konfigurasi)\n----------------------------`,
-      );
+    const env = readDeliveryEnv(Boolean(smtp));
+
+    switch (resolveDelivery(env)) {
+      case "smtp": {
+        const transport = nodemailer.createTransport({
+          host: smtp!.host,
+          port: smtp!.port,
+          secure: smtp!.secure,
+          auth: smtp!.user ? { user: smtp!.user, pass: smtp!.pass } : undefined,
+        });
+        await transport.sendMail({ from: smtp!.from, to, subject, text: body });
+        break;
+      }
+      case "console": {
+        // Development saja. Isi email hanya ikut tercetak bila boleh — kode OTP
+        // tidak pernah ikut kecuali OTP_DEBUG_LOG=1 diset sadar-sadar.
+        const detail = shouldLogBody(jenis, env)
+          ? `${subject}\n${body}`
+          : `${subject}\n(isi tidak dicetak — baca di Mailpit http://localhost:8025)`;
+        console.log(
+          `\n[EMAIL→${maskRecipient(to)}] (${jenis}) ${detail}\n` +
+            `(SMTP belum dikonfigurasi — set di /dashboard/konfigurasi)\n----------------------------`,
+        );
+        break;
+      }
+      case "fail":
+        // Produksi tanpa SMTP: gagal terang-terangan. Kegagalannya tercatat di
+        // notifikasi_log di bawah, jadi admin punya jejak untuk ditindaklanjuti.
+        throw new Error(NO_SMTP_ERROR);
     }
   } catch (e) {
     ok = false;
