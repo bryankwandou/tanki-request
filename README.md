@@ -100,6 +100,24 @@ mencetak isi email (termasuk kode OTP hidup) ke log container. Fallback console
 hanya ada di luar produksi, dan kode OTP tetap tidak dicetak kecuali
 `OTP_DEBUG_LOG=1` diset sadar-sadar; jalur normalnya adalah membaca Mailpit.
 
+### Membagikan dump database
+
+Gunakan `db/dump_sanitized.sh`, jangan `mysqldump` polos:
+
+```bash
+bash db/dump_sanitized.sh                    # → dump-YYYYmmdd-HHMM.sql
+bash db/dump_sanitized.sh /tmp/berbagi.sql   # tujuan sendiri
+```
+
+Struktur seluruh tabel ikut supaya hasil restore langsung jalan, tapi **isi**
+`konfigurasi` (kredensial SMTP) dan `otp_verifikasi` (hash OTP hidup, email, dan
+keluhan pelapor) tidak ikut. Skrip memverifikasi hasilnya sendiri dan menolak
+menghasilkan berkas bila masih ada baris yang lolos.
+
+Ini lapis kedua setelah enkripsi di atas, bukan penggantinya. Dan perlu dicatat:
+dump hasil skrip ini **tetap** memuat data pribadi pelanggan pada tabel `tiket`
+dan `pelanggan` — yang dihapus hanya kredensial sistem, bukan anonimisasi.
+
 > Saat instance produksi `DIAMOND` di VPS hidup kembali, cukup ganti
 > `AUTH_KEYCLOAK_ISSUER` & `AUTH_KEYCLOAK_SECRET` di `.env` ke nilai produksi
 > (lihat blok komentar di `.env`) dan provisioning via `db/keycloak_setup_tanki_client.mjs`.
