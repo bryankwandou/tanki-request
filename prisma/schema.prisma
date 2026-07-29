@@ -118,6 +118,11 @@ model TiketRiwayat {
 
 model OtpVerifikasi {
   id          BigInt    @id @default(autoincrement())
+  // Identitas yang dipegang klien selama alur OTP. Sengaja BUKAN `id`:
+  // id bersifat sequential, jadi penyerang bisa menebak/menghitung otpId milik
+  // orang lain dan menyerang permintaan yang bukan miliknya. 32 byte acak
+  // (base64url) tidak bisa ditebak. Lihat Issue #4.
+  token       String    @unique @db.VarChar(64)
   noPelanggan String    @map("no_pelanggan") @db.Char(9)
   email       String    @db.VarChar(150)
   noHp        String    @map("no_hp") @db.VarChar(20)

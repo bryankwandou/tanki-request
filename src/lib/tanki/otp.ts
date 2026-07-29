@@ -14,6 +14,19 @@ function genCode(len: number): string {
 }
 const hash = (code: string) => crypto.createHash("sha256").update(code).digest("hex");
 
+/**
+ * Identitas permintaan OTP yang dipegang klien.
+ *
+ * Row id bersifat sequential, jadi memakainya sebagai `otpId` publik berarti
+ * penyerang dapat menghitung id milik orang lain dan menyerang permintaan yang
+ * bukan miliknya — termasuk menghabiskan cap percobaan korban. 32 byte acak
+ * menutup itu. Lihat Issue #4.
+ */
+const genToken = () => crypto.randomBytes(32).toString("base64url");
+
+/** Bentuk token yang sah — dipakai untuk menolak input sampah sebelum query. */
+const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+
 export function maskEmail(email: string): string {
   const [u, d] = email.split("@");
   if (!d) return email;
@@ -49,6 +62,7 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
 
   const row = await db.otpVerifikasi.create({
     data: {
+      token: genToken(),
       noPelanggan: input.noPelanggan,
       email: input.email,
       noHp: input.noHp,
@@ -60,7 +74,7 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
   });
 
   await notifyOtp(input.email, code, ttl);
-  return { ok: true, otpId: row.id.toString(), emailMasked: maskEmail(input.email), ttl };
+  return { ok: true, otpId: row.token, emailMasked: maskEmail(input.email), ttl };
 }
 
 export type VerifyResult = { ok: true; noTiket: string } | { ok: false; error: string };
@@ -70,21 +84,20 @@ export async function verifyPendingOtp(
   code: string,
   clientIp = "unknown",
 ): Promise<VerifyResult> {
-  let id: bigint;
-  try {
-    id = BigInt(otpId);
-  } catch {
-    return { ok: false, error: "Sesi verifikasi tidak valid." };
-  }
+  if (!TOKEN_RE.test(otpId)) return { ok: false, error: "Sesi verifikasi tidak valid." };
 
-  // Throttle per-IP dijalankan SEBELUM query, supaya membanjiri endpoint dengan
-  // otpId acak pun tetap terbatas dan tidak menjadi beban database.
+  // Throttle per-IP dan per-otpId dijalankan SEBELUM query, supaya membanjiri
+  // endpoint dengan token acak pun tetap terbatas dan tidak membebani database.
   const byIp = await rateLimit(`otp:verify:ip:${clientIp}`, THROTTLE.verifyIp.max, THROTTLE.verifyIp.windowMs);
   if (!byIp.allowed) return { ok: false, error: TOO_MANY };
 
-  const row = await db.otpVerifikasi.findUnique({ where: { id } });
+  const byId = await rateLimit(`otp:verify:id:${otpId}`, THROTTLE.verifyId.max, THROTTLE.verifyId.windowMs);
+  if (!byId.allowed) return { ok: false, error: TOO_MANY };
+
+  const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
   if (!row || row.status !== "PENDING")
     return { ok: false, error: "Kode tidak ditemukan atau sudah dipakai. Silakan ajukan ulang." };
+  const id = row.id;
 
   const byEmail = await rateLimit(
     `otp:verify:email:${row.email.toLowerCase()}`,
@@ -122,19 +135,18 @@ export async function resendPendingOtp(
   otpId: string,
   clientIp = "unknown",
 ): Promise<{ ok: boolean; error?: string }> {
-  let id: bigint;
-  try {
-    id = BigInt(otpId);
-  } catch {
-    return { ok: false, error: "Sesi verifikasi tidak valid." };
-  }
+  if (!TOKEN_RE.test(otpId)) return { ok: false, error: "Sesi verifikasi tidak valid." };
 
   const byIp = await rateLimit(`otp:resend:ip:${clientIp}`, THROTTLE.resendIp.max, THROTTLE.resendIp.windowMs);
   if (!byIp.allowed) return { ok: false, error: TOO_MANY };
 
-  const row = await db.otpVerifikasi.findUnique({ where: { id } });
+  const byId = await rateLimit(`otp:resend:id:${otpId}`, THROTTLE.resendId.max, THROTTLE.resendId.windowMs);
+  if (!byId.allowed) return { ok: false, error: TOO_MANY };
+
+  const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
   if (!row || row.status !== "PENDING")
     return { ok: false, error: "Tidak ada permintaan menunggu. Silakan ajukan ulang." };
+  const id = row.id;
 
   const byEmail = await rateLimit(
     `otp:resend:email:${row.email.toLowerCase()}`,

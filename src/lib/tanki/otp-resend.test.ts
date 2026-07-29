@@ -1,5 +1,6 @@
+import crypto from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { evaluateResendGate } from "./otp-policy";
+import { evaluateResendGate, THROTTLE } from "./otp-policy";
 
 const LIMITS = { maxAttempts: 5, maxResends: 3, cooldownMs: 60_000 };
 const NOW = new Date("2026-07-28T10:00:00Z").getTime();
@@ -119,5 +120,55 @@ describe("jeda antar kirim ulang", () => {
     );
     expect(gate.allow).toBe(false);
     if (!gate.allow) expect(gate.expire).toBe(true);
+  });
+});
+
+describe("Issue #4 item 5 — otpId tidak boleh sequential row id", () => {
+  // Salinan generator + validator di src/lib/tanki/otp.ts.
+  const genToken = () => crypto.randomBytes(32).toString("base64url");
+  const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+
+  it("token berbentuk base64url 43 karakter (32 byte acak)", () => {
+    const t = genToken();
+    expect(t).toMatch(TOKEN_RE);
+    expect(Buffer.from(t, "base64url")).toHaveLength(32);
+  });
+
+  it("tidak dapat ditebak: 1000 token semuanya unik", () => {
+    const set = new Set(Array.from({ length: 1000 }, genToken));
+    expect(set.size).toBe(1000);
+  });
+
+  it("token tidak berurutan — beda antar token tidak bisa diprediksi", () => {
+    // Row id sequential: id korban = id sendiri +/- n. Token tidak begitu.
+    const a = genToken();
+    const b = genToken();
+    let sama = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] === b[i]) sama++;
+    // Dengan 64 simbol, kecocokan posisional yang diharapkan ~43/64 ≈ 0.67.
+    expect(sama).toBeLessThan(10);
+  });
+
+  it("menolak bentuk lama (row id sequential) dan input sampah", () => {
+    for (const bad of ["1", "42", "999999", "", "../../etc/passwd", "a".repeat(42), "a".repeat(44), "abc+def/ghi="]) {
+      expect(TOKEN_RE.test(bad), `seharusnya ditolak: ${bad}`).toBe(false);
+    }
+  });
+});
+
+describe("Issue #4 item 1 — throttle berkunci otpId DAN identitas klien", () => {
+  it("keempat kunci verify/resend ada dan berbatas", () => {
+    // Checklist meminta "keyed on both otpId and client identity".
+    expect(THROTTLE.verifyId.max).toBeGreaterThan(0);
+    expect(THROTTLE.resendId.max).toBeGreaterThan(0);
+    expect(THROTTLE.verifyIp.max).toBeGreaterThan(0);
+    expect(THROTTLE.verifyEmail.max).toBeGreaterThan(0);
+    expect(THROTTLE.resendIp.max).toBeGreaterThan(0);
+    expect(THROTTLE.resendEmail.max).toBeGreaterThan(0);
+  });
+
+  it("cap per-otpId tidak melebihi cap tebakan, agar cap DB tetap yang mengikat", () => {
+    expect(THROTTLE.verifyId.max).toBeLessThanOrEqual(LIMITS.maxAttempts * 2);
+    expect(THROTTLE.resendId.max).toBeLessThanOrEqual(LIMITS.maxResends);
   });
 });

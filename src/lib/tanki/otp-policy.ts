@@ -26,6 +26,15 @@ export const RESEND_COOLDOWN_MS = 60_000;
  * dua identitas yang tidak bisa mereka ganti sesuka hati.
  */
 export const THROTTLE = {
+  // Per-permintaan (otpId). Sesuai checklist Issue #4 yang meminta kunci pada
+  // otpId DAN identitas klien. Sendirian kunci ini tidak cukup — penyerang bisa
+  // submit ulang untuk mendapat otpId segar — tapi ia menutup hal yang tidak
+  // ditutup kunci lain: pembatasan per permintaan tertentu, termasuk saat
+  // penyerang berpindah IP untuk menyerang satu permintaan yang sama.
+  verifyId: { max: 10, windowMs: 10 * 60_000 },
+  resendId: { max: 3, windowMs: 10 * 60_000 },
+
+  // Identitas klien.
   verifyIp: { max: 20, windowMs: 10 * 60_000 },
   verifyEmail: { max: 10, windowMs: 10 * 60_000 },
   resendIp: { max: 5, windowMs: 10 * 60_000 },
