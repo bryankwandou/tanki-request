@@ -1,9 +1,7 @@
-import { extractClientIp, rateLimit } from "@/lib/tanki/rate-limit";
 import { db } from "@/lib/db";
 import { STATUS_LABEL } from "@/lib/tanki/status";
 import type { StatusTiket } from "@/generated/prisma/client";
 import type { Metadata } from "next";
-import { headers } from "next/headers";
 
 export const metadata: Metadata = { title: "Lacak Permintaan" };
 export const dynamic = "force-dynamic";
@@ -32,39 +30,13 @@ export default async function LacakPage({
   const { nop, hp } = await searchParams;
   const hasQuery = Boolean(nop && hp);
 
-  // Rate limit: /lacak searches — max 30 per IP per 10 menit (FR-08 extension)
-  let rateLimited = false;
-  if (hasQuery) {
-    const h = await headers();
-    const ip = extractClientIp(h.get("x-forwarded-for"), h.get("x-real-ip"));
-    const rl = await rateLimit(`lacak:ip:${ip}`, 30, 10 * 60_000);
-    rateLimited = !rl.allowed;
-  }
-
-  // Input validation: noPelanggan must be 9 digits, noHp must start with 0
-  const nopValid = !nop || /^\d{9}$/.test(nop);
-  const hpValid = !hp || /^0\d{8,13}$/.test(hp);
-  const inputValid = nopValid && hpValid;
-
-  const tiket =
-    hasQuery && !rateLimited && inputValid
-      ? await db.tiket.findMany({
-          where: { noPelanggan: nop, noHp: hp },
-          orderBy: { createdAt: "desc" },
-          // Only expose fields the public needs — exclude operator notes (catatan)
-          include: {
-            riwayat: {
-              orderBy: { createdAt: "asc" },
-              select: {
-                id: true,
-                status: true,
-                createdAt: true,
-                // catatan (operator note) is intentionally NOT selected here
-              },
-            },
-          },
-        })
-      : [];
+  const tiket = hasQuery
+    ? await db.tiket.findMany({
+        where: { noPelanggan: nop, noHp: hp },
+        orderBy: { createdAt: "desc" },
+        include: { riwayat: { orderBy: { createdAt: "asc" } } },
+      })
+    : [];
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
@@ -97,19 +69,7 @@ export default async function LacakPage({
         </div>
       </form>
 
-      {rateLimited && (
-        <div className="mt-6 rounded-2xl border border-[#fee2e2] bg-[#fff1f2] p-5 text-center text-sm text-[#b91c1c]">
-          Terlalu banyak pencarian dari jaringan Anda. Coba lagi beberapa menit lagi.
-        </div>
-      )}
-
-      {!inputValid && hasQuery && (
-        <div className="mt-6 rounded-2xl border border-[#fee2e2] bg-[#fff1f2] p-5 text-center text-sm text-[#b91c1c]">
-          Format No. Pelanggan atau No. HP tidak valid.
-        </div>
-      )}
-
-      {hasQuery && !rateLimited && inputValid && (
+      {hasQuery && (
         <div className="mt-6 space-y-5">
           {tiket.length === 0 ? (
             <div className="rounded-2xl border border-[#e0f2fe] bg-white p-8 text-center text-[#0a2540]/60 shadow-sm">
@@ -150,6 +110,7 @@ export default async function LacakPage({
                           <div>
                             <div className="text-sm font-semibold text-[#0a2540]">{STATUS_LABEL[r.status]}</div>
                             <div className="text-xs text-[#0a2540]/50">{r.createdAt.toLocaleString("id-ID")}</div>
+                            {r.catatan && <div className="mt-0.5 text-sm text-[#0a2540]/70">{r.catatan}</div>}
                           </div>
                         </li>
                       ))}
