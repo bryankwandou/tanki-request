@@ -43,6 +43,24 @@ export const THROTTLE = {
 
 export const TOO_MANY = "Terlalu banyak percobaan. Coba lagi beberapa menit lagi.";
 
+/**
+ * Satu pesan untuk SEMUA kegagalan verifikasi yang menyangkut keadaan baris:
+ * token tidak dikenal, sudah dipakai, kedaluwarsa, cap tebakan habis, dan kode
+ * salah.
+ *
+ * Sebelumnya tiap keadaan punya pesannya sendiri, sehingga satu request cukup
+ * untuk memberi tahu penyerang apakah sebuah `otpId` sedang hidup — dan pesan
+ * "Sisa percobaan: N" bahkan menyebutkan berapa tebakan yang tersisa. Keduanya
+ * oracle. Token acak sudah membuat penebakan `otpId` tidak praktis, tapi
+ * membedakan pesan tetap membocorkan keadaan tanpa perlu, jadi disatukan.
+ *
+ * Throttle (`TOO_MANY`) sengaja TETAP dibedakan: status "terlalu sering" tidak
+ * menyatakan apa pun tentang ada atau tidaknya data, dan pengguna sah perlu
+ * tahu bahwa ia hanya perlu menunggu — bukan mengulang dari awal.
+ */
+export const VERIFY_FAILED =
+  "Kode verifikasi salah atau sudah tidak berlaku. Periksa kembali kode terbaru di email Anda, atau ajukan permintaan baru.";
+
 export type ResendGate = { allow: true } | { allow: false; expire: boolean; error: string };
 
 export type ResendLimits = {

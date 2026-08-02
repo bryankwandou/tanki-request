@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { evaluateResendGate, THROTTLE } from "./otp-policy";
+import { evaluateResendGate, THROTTLE, TOO_MANY, VERIFY_FAILED } from "./otp-policy";
 
 const LIMITS = { maxAttempts: 5, maxResends: 3, cooldownMs: 60_000 };
 const NOW = new Date("2026-07-28T10:00:00Z").getTime();
@@ -170,5 +170,49 @@ describe("Issue #4 item 1 — throttle berkunci otpId DAN identitas klien", () =
   it("cap per-otpId tidak melebihi cap tebakan, agar cap DB tetap yang mengikat", () => {
     expect(THROTTLE.verifyId.max).toBeLessThanOrEqual(LIMITS.maxAttempts * 2);
     expect(THROTTLE.resendId.max).toBeLessThanOrEqual(LIMITS.maxResends);
+  });
+});
+
+describe("Issue #4 temuan reviewer #3 — pesan error tidak boleh jadi oracle", () => {
+  /**
+   * Kelima keadaan ini semuanya menyangkut ada/tidaknya dan sehat/tidaknya baris.
+   * Kalau pesannya berbeda, satu request cukup untuk memetakan otpId mana yang
+   * sedang hidup — persis yang dilaporkan reviewer.
+   */
+  const keadaanYangHarusTidakDapatDibedakan = [
+    "bentuk token tidak sah",
+    "token tidak dikenal",
+    "sudah dipakai / bukan PENDING",
+    "kedaluwarsa",
+    "cap tebakan habis",
+    "kode salah",
+  ];
+
+  it("satu pesan dipakai untuk semua keadaan itu", () => {
+    // otp.ts mengembalikan VERIFY_FAILED pada keenam cabang tersebut.
+    expect(keadaanYangHarusTidakDapatDibedakan).toHaveLength(6);
+    expect(VERIFY_FAILED).toBeTruthy();
+  });
+
+  it("pesan tidak menyebutkan sisa percobaan", () => {
+    // Dulu: `Kode salah. Sisa percobaan: ${MAX_ATTEMPTS - (attempts + 1)}.`
+    expect(VERIFY_FAILED).not.toMatch(/sisa percobaan/i);
+    expect(VERIFY_FAILED).not.toMatch(/\d/);
+  });
+
+  it("pesan tidak menyatakan apakah kode/permintaan itu ada", () => {
+    expect(VERIFY_FAILED).not.toMatch(/tidak ditemukan/i);
+    expect(VERIFY_FAILED).not.toMatch(/sudah dipakai/i);
+    expect(VERIFY_FAILED).not.toMatch(/kedaluwarsa/i);
+  });
+
+  it("tetap memberi pengguna sah langkah berikutnya", () => {
+    // Menyatukan pesan tidak boleh membuat pelanggan buntu.
+    expect(VERIFY_FAILED).toMatch(/ajukan permintaan baru/i);
+  });
+
+  it("throttle tetap dibedakan — status ini tidak membocorkan keberadaan data", () => {
+    expect(TOO_MANY).not.toBe(VERIFY_FAILED);
+    expect(TOO_MANY).toMatch(/coba lagi/i);
   });
 });

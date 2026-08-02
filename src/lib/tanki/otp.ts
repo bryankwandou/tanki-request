@@ -2,7 +2,13 @@ import crypto from "node:crypto";
 import { db } from "@/lib/db";
 import { getConfig } from "@/lib/tanki/config";
 import { notifyOtp } from "@/lib/tanki/notify";
-import { evaluateResendGate, MAX_ATTEMPTS, THROTTLE, TOO_MANY } from "@/lib/tanki/otp-policy";
+import {
+  evaluateResendGate,
+  MAX_ATTEMPTS,
+  THROTTLE,
+  TOO_MANY,
+  VERIFY_FAILED,
+} from "@/lib/tanki/otp-policy";
 import { rateLimit } from "@/lib/tanki/rate-limit";
 import { ACTIVE_STATUSES } from "@/lib/tanki/status";
 import { createTiket } from "@/lib/tanki/tiket";
@@ -84,7 +90,7 @@ export async function verifyPendingOtp(
   code: string,
   clientIp = "unknown",
 ): Promise<VerifyResult> {
-  if (!TOKEN_RE.test(otpId)) return { ok: false, error: "Sesi verifikasi tidak valid." };
+  if (!TOKEN_RE.test(otpId)) return { ok: false, error: VERIFY_FAILED };
 
   // Throttle per-IP dan per-otpId dijalankan SEBELUM query, supaya membanjiri
   // endpoint dengan token acak pun tetap terbatas dan tidak membebani database.
@@ -96,7 +102,7 @@ export async function verifyPendingOtp(
 
   const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
   if (!row || row.status !== "PENDING")
-    return { ok: false, error: "Kode tidak ditemukan atau sudah dipakai. Silakan ajukan ulang." };
+    return { ok: false, error: VERIFY_FAILED };
   const id = row.id;
 
   const byEmail = await rateLimit(
@@ -107,15 +113,15 @@ export async function verifyPendingOtp(
   if (!byEmail.allowed) return { ok: false, error: TOO_MANY };
   if (row.expiredAt < new Date()) {
     await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
-    return { ok: false, error: "Kode sudah kedaluwarsa. Minta kode baru." };
+    return { ok: false, error: VERIFY_FAILED };
   }
   if (row.attempts >= MAX_ATTEMPTS) {
     await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
-    return { ok: false, error: "Terlalu banyak percobaan. Silakan ajukan ulang." };
+    return { ok: false, error: VERIFY_FAILED };
   }
   if (hash(code.trim()) !== row.kodeHash) {
     await db.otpVerifikasi.update({ where: { id }, data: { attempts: row.attempts + 1 } });
-    return { ok: false, error: `Kode salah. Sisa percobaan: ${MAX_ATTEMPTS - (row.attempts + 1)}.` };
+    return { ok: false, error: VERIFY_FAILED };
   }
 
   // Kode benar → baru sekarang laporan/tiket dibuat (email terverifikasi).
@@ -135,7 +141,7 @@ export async function resendPendingOtp(
   otpId: string,
   clientIp = "unknown",
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!TOKEN_RE.test(otpId)) return { ok: false, error: "Sesi verifikasi tidak valid." };
+  if (!TOKEN_RE.test(otpId)) return { ok: false, error: VERIFY_FAILED };
 
   const byIp = await rateLimit(`otp:resend:ip:${clientIp}`, THROTTLE.resendIp.max, THROTTLE.resendIp.windowMs);
   if (!byIp.allowed) return { ok: false, error: TOO_MANY };
@@ -145,7 +151,7 @@ export async function resendPendingOtp(
 
   const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
   if (!row || row.status !== "PENDING")
-    return { ok: false, error: "Tidak ada permintaan menunggu. Silakan ajukan ulang." };
+    return { ok: false, error: VERIFY_FAILED };
   const id = row.id;
 
   const byEmail = await rateLimit(
