@@ -69,11 +69,18 @@ enum NotifJenis {
   OTP
   TIKET
   UPDATE
+  // Email percobaan dari halaman konfigurasi. Dipisah supaya uji coba admin
+  // tidak bercampur dengan notifikasi tiket di log audit (FR-20/21).
+  TES
 }
 
 enum KirimStatus {
   TERKIRIM
   GAGAL
+  // Tidak ada email yang benar-benar keluar — jalur fallback console saat SMTP
+  // belum dikonfigurasi (khusus non-produksi). Dicatat terpisah supaya log
+  // audit tidak mengklaim "TERKIRIM" untuk email yang tidak pernah ada.
+  DILEWATI
 }
 
 model Tiket {

@@ -95,7 +95,9 @@ export async function testSmtp(
 
   const r = await sendEmail({
     to,
-    jenis: "UPDATE",
+    // TES, bukan UPDATE — email percobaan admin tidak boleh mengotori log
+    // audit notifikasi tiket.
+    jenis: "TES",
     subject: "Tes SMTP — Tanki Je'ne'",
     body: "Ini email percobaan dari konfigurasi SMTP Tanki Je'ne'. Bila Anda menerimanya, konfigurasi sudah benar.",
   });

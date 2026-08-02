@@ -20,7 +20,10 @@ export const CONFIG_DEFAULTS = {
   // --- Template email (FR-22/FR-32) ---
   // Placeholder ditulis {{nama}} dan diisi renderTemplate() di notify.ts.
   // Nilai di bawah = teks yang sebelumnya hardcoded, jadi perilaku default tidak berubah.
-  tpl_otp_subject: "Kode verifikasi permintaan Tanki Je'ne': {{kode}}",
+  // Sengaja TANPA {{kode}}. Kode di subjek terbaca dari pratinjau notifikasi di
+  // layar kunci ponsel tanpa membuka email, dan ikut tercetak di mana pun subjek
+  // di-log. Placeholder {{kode}} tetap tersedia bila admin memang menginginkannya.
+  tpl_otp_subject: "Kode verifikasi permintaan Tanki Je'ne'",
   tpl_otp_body:
     "Kode verifikasi Anda: {{kode}}\n" +
     "Masukkan kode ini di halaman permintaan untuk mengonfirmasi laporan Anda.\n" +

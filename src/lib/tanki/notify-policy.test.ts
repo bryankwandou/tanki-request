@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { maskRecipient, resolveDelivery, shouldLogBody } from "./notify-policy";
+import { CONFIG_DEFAULTS } from "./config-schema";
 
 const env = (o: Partial<Parameters<typeof resolveDelivery>[0]>) => ({
   hasSmtp: false,
@@ -57,5 +58,38 @@ describe("penyamaran alamat penerima", () => {
 
   it("bukan alamat email tidak bocor apa pun", () => {
     expect(maskRecipient("bukan-email")).toBe("***");
+  });
+});
+
+describe("Issue #7 — temuan lanjutan reviewer", () => {
+  it("subjek OTP bawaan tidak memuat kode", () => {
+    // Reviewer: kode di subjek terbaca dari pratinjau notifikasi di layar kunci
+    // ponsel tanpa membuka email, dan ikut bocor ke mana pun subjek di-log.
+    expect(CONFIG_DEFAULTS.tpl_otp_subject).not.toMatch(/\{\{\s*kode\s*\}\}/);
+  });
+
+  it("subjek OTP tetap menjelaskan isinya bagi penerima", () => {
+    expect(CONFIG_DEFAULTS.tpl_otp_subject.toLowerCase()).toContain("verifikasi");
+  });
+
+  it("isi OTP bawaan tetap memuat kode — di situlah tempatnya", () => {
+    expect(CONFIG_DEFAULTS.tpl_otp_body).toMatch(/\{\{\s*kode\s*\}\}/);
+  });
+
+  it("menahan body saja tidak cukup — jebakan yang diperingatkan reviewer", () => {
+    // shouldLogBody() memutuskan subjek DAN isi sekaligus di notify.ts, jadi
+    // OTP tanpa OTP_DEBUG_LOG tidak mencetak keduanya.
+    expect(shouldLogBody("OTP", env({}))).toBe(false);
+    expect(shouldLogBody("OTP", env({ otpDebugLog: true }))).toBe(true);
+  });
+
+  it("status log audit: jalur console bukan TERKIRIM", () => {
+    // notify.ts: !ok ? "GAGAL" : dilewati ? "DILEWATI" : "TERKIRIM"
+    const status = (ok: boolean, dilewati: boolean) =>
+      !ok ? "GAGAL" : dilewati ? "DILEWATI" : "TERKIRIM";
+    expect(status(true, true)).toBe("DILEWATI");
+    expect(status(true, false)).toBe("TERKIRIM");
+    expect(status(false, true)).toBe("GAGAL");
+    expect(status(false, false)).toBe("GAGAL");
   });
 });

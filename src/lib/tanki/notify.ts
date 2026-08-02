@@ -28,6 +28,9 @@ export async function sendEmail({ to, subject, body, jenis, tiketId }: SendArgs)
 
   let ok = true;
   let error: string | null = null;
+  // Dicatat terpisah dari `ok`: jalur console "berhasil" secara teknis, tapi
+  // tidak ada email yang benar-benar keluar. Lihat statusKirim di bawah.
+  let dilewati = false;
   try {
     const smtp = await getSmtpConfig();
     const env = readDeliveryEnv(Boolean(smtp));
@@ -46,13 +49,20 @@ export async function sendEmail({ to, subject, body, jenis, tiketId }: SendArgs)
       case "console": {
         // Development saja. Isi email hanya ikut tercetak bila boleh — kode OTP
         // tidak pernah ikut kecuali OTP_DEBUG_LOG=1 diset sadar-sadar.
-        const detail = shouldLogBody(jenis, env)
+        //
+        // SUBJECT ikut ditahan untuk OTP, bukan hanya body. Template subjek
+        // bawaan boleh diubah admin dan bisa saja memuat {{kode}}; menahan body
+        // saja persis jebakan yang diperingatkan reviewer di Issue #7 — kodenya
+        // tetap bocor utuh lewat subjek.
+        const boleh = shouldLogBody(jenis, env);
+        const detail = boleh
           ? `${subject}\n${body}`
-          : `${subject}\n(isi tidak dicetak — baca di Mailpit http://localhost:8025)`;
+          : `(subjek & isi tidak dicetak — baca di Mailpit http://localhost:8025)`;
         console.log(
           `\n[EMAIL→${maskRecipient(to)}] (${jenis}) ${detail}\n` +
             `(SMTP belum dikonfigurasi — set di /dashboard/konfigurasi)\n----------------------------`,
         );
+        dilewati = true;
         break;
       }
       case "fail":
@@ -72,7 +82,9 @@ export async function sendEmail({ to, subject, body, jenis, tiketId }: SendArgs)
         channel: "EMAIL",
         jenis,
         tujuan: to,
-        statusKirim: ok ? "TERKIRIM" : "GAGAL",
+        // DILEWATI, bukan TERKIRIM: tidak ada email yang benar-benar keluar
+        // lewat jalur console. Log audit FR-20/21 harus jujur soal ini.
+        statusKirim: !ok ? "GAGAL" : dilewati ? "DILEWATI" : "TERKIRIM",
         error,
       },
     });
