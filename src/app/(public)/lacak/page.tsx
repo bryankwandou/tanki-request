@@ -51,7 +51,16 @@ export default async function LacakPage({
     rateLimited = !rl.allowed;
   }
 
-  // Input validation: noPelanggan must be 9 digits, noHp must start with 0
+  /**
+   * Validasi bentuk sebelum menyentuh database (Issue #6).
+   *
+   * Input yang tidak berbentuk ditolak di sini, dan hasilnya dirender PERSIS
+   * sama dengan "tidak ada yang cocok" — checklist Issue #6 meminta respons
+   * identik untuk no-match dan malformed supaya bentuk maupun waktu balasan
+   * tidak membedakan keduanya. Pesan terpisah "format tidak valid" membuat
+   * halaman ini bisa dipakai memilah tebakan yang berbentuk benar dari yang
+   * tidak, dan itu percuma menyisakan sinyal.
+   */
   const nopValid = !nop || /^\d{9}$/.test(nop);
   const hpValid = !hp || /^0\d{8,13}$/.test(hp);
   const inputValid = nopValid && hpValid;
@@ -156,13 +165,7 @@ export default async function LacakPage({
         </div>
       )}
 
-      {!inputValid && hasQuery && (
-        <div className="mt-6 rounded-2xl border border-[#fee2e2] bg-[#fff1f2] p-5 text-center text-sm text-[#b91c1c]">
-          Format No. Pelanggan atau No. HP tidak valid.
-        </div>
-      )}
-
-      {(tokenNoTiket || hasQuery) && !rateLimited && inputValid && (
+      {(tokenNoTiket || hasQuery) && !rateLimited && (
         <div className="mt-6 space-y-5">
           {tiket.length === 0 ? (
             <div className="rounded-2xl border border-[#e0f2fe] bg-white p-8 text-center text-[#0a2540]/60 shadow-sm">
