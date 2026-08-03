@@ -15,7 +15,14 @@ PRD lengkap: [`PRD_TANKI_JENE.md`](./PRD_TANKI_JENE.md).
 > - **Konfigurasi admin**: SMTP (host/port/secure/user/pass write-only/from), parameter OTP & rate-limit (di-clamp di sisi server), dan **template email** ketiga jenis notifikasi dengan placeholder, plus tombol "kirim email tes".
 > - **Laporan** (FR-45..47): agregasi per status/wilayah/rayon atas rentang tanggal, filter, grafik, dan ekspor CSV + Excel.
 >
-> Belum: login Keycloak (instance VPS sedang down).
+> Login operator Keycloak sudah diuji end-to-end (authorization code + PKCE +
+> callback + cookie sesi, keempat matriks role) terhadap Keycloak 26.1.
+>
+> Belum: **realm DIAMOND produksi belum siap dipakai.** Instansnya sudah hidup
+> kembali, tapi verifikasi (`node db/keycloak_verifikasi.mjs`) menemukan client
+> `tanki-jene` di sana masih **public**, bukan confidential, dan belum
+> mewajibkan PKCE. Sampai itu dibereskan admin Keycloak PDAM, login produksi
+> tidak boleh dianggap aman. Lihat Issue #2.
 
 ## Stack
 
