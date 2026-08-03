@@ -2,7 +2,7 @@ import { extractClientIp, rateLimit } from "@/lib/tanki/rate-limit";
 import { verifyTrackingToken } from "@/lib/tanki/tracking-link";
 import { db } from "@/lib/db";
 import { STATUS_LABEL } from "@/lib/tanki/status";
-import type { StatusTiket } from "@/generated/prisma/client";
+import { Prisma, type StatusTiket } from "@/generated/prisma/client";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 
@@ -60,28 +60,51 @@ export default async function LacakPage({
     ? { noTiket: tokenNoTiket }
     : { noPelanggan: nop, noHp: hp };
 
-  const tiket =
+  const barisTiket =
     (tokenNoTiket || hasQuery) && !rateLimited && inputValid
       ? await db.tiket.findMany({
           where,
           orderBy: { createdAt: "desc" },
-          // Only expose fields the public needs — exclude operator notes (catatan)
-          include: {
-            riwayat: {
-              orderBy: { createdAt: "asc" },
-              select: {
-                id: true,
-                status: true,
-                createdAt: true,
-                // Catatan hanya ikut bila operator menandainya publik (Issue #6).
-                // Kolom penandanya ikut diambil supaya render tidak perlu menebak.
-                catatan: true,
-                catatanPublik: true,
-              },
-            },
-          },
+          // Kolom disebut satu per satu. `include` akan menarik SELURUH kolom
+          // skalar tiket — termasuk email dan no. HP pelapor — yang tidak
+          // dibutuhkan halaman publik ini.
+          select: { id: true, noTiket: true, status: true, keluhan: true },
         })
       : [];
+
+  /**
+   * Riwayat diambil terpisah, dan keputusan boleh-tidaknya `catatan` ikut
+   * dijatuhkan DI SISI DATABASE.
+   *
+   * Dengan `select: { catatan: true, catatanPublik: true }` lalu disaring saat
+   * render, catatan internal operator tetap terbaca keluar dari database dan
+   * hanya kebetulan tidak tercetak. Issue #6 meminta kolomnya memang tidak
+   * ikut tertarik — itu yang bisa diperiksa dari query log, bukan dari HTML.
+   */
+  type RiwayatPublik = {
+    id: bigint;
+    tiket_id: bigint;
+    status: StatusTiket;
+    created_at: Date;
+    catatan: string | null;
+  };
+
+  const barisRiwayat = barisTiket.length
+    ? await db.$queryRaw<RiwayatPublik[]>`
+        SELECT id,
+               tiket_id,
+               status,
+               created_at,
+               CASE WHEN catatan_publik = 1 THEN catatan ELSE NULL END AS catatan
+          FROM tiket_riwayat
+         WHERE tiket_id IN (${Prisma.join(barisTiket.map((t) => t.id))})
+         ORDER BY created_at ASC`
+    : [];
+
+  const tiket = barisTiket.map((t) => ({
+    ...t,
+    riwayat: barisRiwayat.filter((r) => String(r.tiket_id) === String(t.id)),
+  }));
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
@@ -179,8 +202,8 @@ export default async function LacakPage({
                           <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-[#0284c7]" />
                           <div>
                             <div className="text-sm font-semibold text-[#0a2540]">{STATUS_LABEL[r.status]}</div>
-                            <div className="text-xs text-[#0a2540]/50">{r.createdAt.toLocaleString("id-ID")}</div>
-                            {r.catatanPublik && r.catatan && (
+                            <div className="text-xs text-[#0a2540]/50">{r.created_at.toLocaleString("id-ID")}</div>
+                            {r.catatan && (
                               <p className="mt-1 text-sm text-[#0a2540]/70">{r.catatan}</p>
                             )}
                           </div>
