@@ -2,7 +2,7 @@
 
 import { getConfig } from "@/lib/tanki/config";
 import { createPendingRequest, resendPendingOtp, verifyPendingOtp } from "@/lib/tanki/otp";
-import { rateLimit } from "@/lib/tanki/rate-limit";
+import { extractClientIp, rateLimit } from "@/lib/tanki/rate-limit";
 import { createTiket } from "@/lib/tanki/tiket";
 import { headers } from "next/headers";
 import { z } from "zod";
@@ -25,7 +25,10 @@ const schema = z.object({
 
 async function clientIp() {
   const h = await headers();
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
+  return extractClientIp(
+    h.get("x-forwarded-for"),
+    h.get("x-real-ip"),
+  );
 }
 
 export async function submitPermintaan(formData: FormData): Promise<FormState> {
@@ -41,12 +44,12 @@ export async function submitPermintaan(formData: FormData): Promise<FormState> {
 
   const cfg = await getConfig();
 
-  // Anti-bot/spam (FR-08/09).
+  // Anti-bot/spam (FR-08/09) — per-IP + per-customer limits.
   const ip = await clientIp();
-  if (!rateLimit(`ip:${ip}`, 5, 10 * 60_000).allowed)
+  if (!(await rateLimit(`submit:ip:${ip}`, 5, 10 * 60_000)).allowed)
     return { status: "error", error: "Terlalu banyak permintaan dari jaringan Anda. Coba lagi nanti." };
   const perHour = Number(cfg.rate_limit_per_hour) || 3;
-  if (!rateLimit(`cust:${data.noPelanggan}`, perHour, 60 * 60_000).allowed)
+  if (!(await rateLimit(`submit:cust:${data.noPelanggan}`, perHour, 60 * 60_000)).allowed)
     return { status: "error", error: "Terlalu banyak permintaan untuk Nomor Pelanggan ini. Coba lagi nanti." };
 
   // OTP = pertahanan utama: laporan baru dibuat setelah email diverifikasi.
@@ -67,11 +70,15 @@ export async function verifyOtp(formData: FormData): Promise<FormState> {
   const code = String(formData.get("code") ?? "").trim();
   if (!code) return { status: "otp", otpId, error: "Masukkan kode verifikasi." };
 
+  // Throttle verify/resend adalah lingkup Issue #4 (attempt-cap bypass), bukan #5.
+  // Key per-otpId saja tidak cukup — penyerang cukup submit ulang untuk dapat
+  // otpId segar. Perlu key per-IP dan per-email; dikerjakan di MR terpisah.
   const r = await verifyPendingOtp(otpId, code);
   if (!r.ok) return { status: "otp", otpId, error: r.error };
   return { status: "done", noTiket: r.noTiket };
 }
 
 export async function resendOtp(otpId: string): Promise<{ ok: boolean; error?: string }> {
+  // Lihat catatan di verifyOtp — throttle resend dikerjakan bersama Issue #4.
   return resendPendingOtp(otpId);
 }
