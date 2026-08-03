@@ -23,6 +23,19 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  # Redis — backend rate limiter atomik (Issue #5). Dimatikan/dinyalakan saat
+  # uji degradasi ke in-memory, jadi sengaja tanpa `restart: unless-stopped`.
+  redis:
+    image: redis:7-alpine
+    container_name: tanki-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # Keycloak lokal untuk development (pengganti instance DIAMOND saat VPS down).
   keycloak:
     image: quay.io/keycloak/keycloak:26.1
