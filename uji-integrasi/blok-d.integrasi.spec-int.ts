@@ -157,3 +157,56 @@ describe("D2 · catatan internal operator tidak tertarik dari database (Issue #6
     }
   });
 });
+
+/**
+ * Checklist Issue #6: "Return an identical response for 'no match' and
+ * 'malformed' so timing/shape does not distinguish them."
+ */
+describe("D4 · respons identik untuk no-match dan malformed (Issue #6)", () => {
+  const ambil = async (qs: string) => {
+    const r = await fetch(`${APP}/lacak?${qs}`, {
+      headers: { "X-Forwarded-For": "4.4.4.4, 203.0.113.44" },
+    });
+    return { status: r.status, html: await r.text() };
+  };
+
+  it("bentuk balasannya sama persis, dan sama-sama tidak menyentuh database", async () => {
+    redis("FLUSHALL");
+
+    // Berbentuk benar tapi tidak ada di database.
+    const noMatch = await ambil("nop=999999999&hp=081999999999");
+    // Tidak berbentuk: nop kurang digit, hp tidak diawali 0.
+    const malformed = await ambil("nop=12&hp=629999999");
+
+    expect(noMatch.status).toBe(malformed.status);
+
+    const PESAN = "Tidak ada permintaan yang cocok dengan data tersebut.";
+    expect(noMatch.html).toContain(PESAN);
+    expect(malformed.html).toContain(PESAN);
+
+    // Tidak ada pesan yang membocorkan bahwa yang gagal adalah bentuknya.
+    expect(malformed.html).not.toMatch(/[Ff]ormat .*tidak valid/);
+
+    // Kedua balasan identik setelah dinormalkan. Yang dinormalkan hanya hal yang
+    // memang wajar berbeda dan tidak membawa informasi: nilai input yang diketik
+    // pengguna sendiri, dan identitas request acak yang disuntikkan Next dalam
+    // mode dev (`self.__next_r`, nonce, URL chunk HMR).
+    const normal = (h: string) =>
+      h
+        .replace(/value="[^"]*"/g, 'value=""')
+        .replace(/<script[\s\S]*?<\/script>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    expect(normal(malformed.html)).toBe(normal(noMatch.html));
+  });
+
+  it("input malformed tidak pernah sampai ke database", async () => {
+    redis("FLUSHALL");
+    mulaiRekamQuery();
+    await ambil("nop=12&hp=629999999");
+    const log = hentikanRekamQuery();
+
+    const kueriTiket = log.split("\n").filter((b) => /SELECT .*FROM `tiket`/.test(b));
+    expect(kueriTiket).toHaveLength(0);
+  });
+});

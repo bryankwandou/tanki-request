@@ -46,6 +46,8 @@ docker exec -i tanki-mysql mysql -uroot -prootpass tanki_jene < db/pelanggan_ddl
 
 # 3. Buat tabel transaksi dari Prisma schema + guard anti double-booking
 npx prisma generate
+# Pada database yang SUDAH BERISI data, jalankan migrasi ini LEBIH DULU —
+# lihat "Upgrade database yang sudah berisi data" di bawah.
 npx prisma db push
 docker exec -i tanki-mysql mysql -uroot -prootpass tanki_jene < db/penugasan_guard.sql
 
@@ -56,6 +58,35 @@ cp .env.example .env
 # 5. Jalankan
 npm run dev   # http://localhost:3000
 ```
+
+## Upgrade database yang sudah berisi data
+
+Pada database kosong, `npx prisma db push` cukup. Pada database yang **sudah
+berisi baris `otp_verifikasi`**, ia akan berhenti:
+
+```
+Error: Added the required column `token` to the `otp_verifikasi` table
+       without a default value. There are 3 rows in this table.
+```
+
+Perlu ditegaskan karena instruksi yang sempat beredar salah: `DELETE FROM
+otp_verifikasi WHERE status = 'PENDING';` **tidak cukup**. Prisma menghitung
+seluruh baris, bukan hanya yang PENDING — satu baris `VERIFIED` yang tersisa pun
+tetap menghentikannya. Mengosongkan seluruh tabel memang membuat `db push`
+jalan, tapi ikut membuang jejak audit dan memutus sesi OTP pelanggan yang sedang
+berjalan saat deploy.
+
+Jalankan migrasi non-destruktif ini **sebelum** `db push`:
+
+```bash
+docker exec -i tanki-mysql mysql -uroot -prootpass tanki_jene < db/migrasi_otp_lapis3.sql
+npx prisma db push
+```
+
+Skrip itu menambah `token` (di-backfill acak per baris, lalu dijadikan UNIQUE
+NOT NULL), `resend_count`, `last_sent_at`, dan `session_hash` — tanpa menghapus
+satu baris pun. Aman diulang: setiap langkah memeriksa dirinya sendiri lebih
+dulu, dan di akhir mencetak ringkasan jumlah baris serta token yang masih kosong.
 
 ## Dev lokal: Keycloak + Mailpit (login & email jalan tanpa VPS)
 
@@ -155,10 +186,68 @@ node db/keycloak_setup_tanki_client.mjs
 ```
 Skrip ini akan memvalidasi dan meng-upsert client confidential (menaktifkan PKCE `S256` dan logout redirect) serta memastikan 4 realm roles tersedia (`app-tanki`, `tanki-operator-crud`, `tanki-operator-readonly`, `tanki-admin`).
 
+### 2b. Verifikasi realm (read-only)
+
+Dua item checklist Issue #2 adalah pernyataan tentang keadaan realm, bukan
+tentang kode, jadi tidak bisa dicentang oleh diff mana pun. `db/keycloak_verifikasi.mjs`
+mengubahnya jadi pemeriksaan yang punya status keluar:
+
+```bash
+KC_URL="https://diamond.pdammakassar.co.id/auth" \
+KC_MASTER_PASS="<password_admin_keycloak>" \
+node db/keycloak_verifikasi.mjs        # keluar 0 bila semua lolos, 1 bila ada yang gagal
+
+KC_URL=http://localhost:8080 KC_MASTER_PASS=admin node db/keycloak_verifikasi.mjs   # lokal
+```
+
+Yang diperiksa: endpoint discovery + dukungan PKCE S256, client `tanki-jene`
+sebagai confidential dengan authorization-code aktif dan implicit mati, redirect
+URI benar-benar mencakup `/api/auth/callback/keycloak` sekaligus **tidak** memuat
+`*`, lalu keempat realm role ada dan benar-benar bisa di-assign.
+
+**Skrip ini tidak menulis apa pun** — aman dijalankan terhadap DIAMOND produksi
+yang dipakai bersama `pdam-hrms` dan `pdam-hubungan-pelanggan`, dan aman
+dijalankan berulang. Pasangannya yang menulis adalah `keycloak_setup_tanki_client.mjs`.
+
 ### 3. Fitur Keamanan & Diagnostik OIDC
 - **Diagnostik Peran (Realm Roles):** Sistem mendekode atribut `realm_access.roles` langsung dari `access_token` Keycloak. Jika struktur token keliru atau peran hilang, server memverifikasi dengan mencatat log diagnostik di konsol (`[AUTH DIAGNOSTIC]`).
 - **Refresh Token Rotation:** Akses token Keycloak berumur pendek (5-15 menit). Callback NextAuth `jwt()` secara otomatis memperbarui token via `grant_type="refresh_token"`. Jika sesi di Keycloak dicabut atau berakhir, token ditandai dengan `RefreshTokenError` dan middleware akan memaksa operator login ulang.
 - **Federated Logout (OIDC RP-Initiated Logout):** Menekan tombol "Keluar" tidak hanya mematikan sesi cookie lokal NextAuth, melainkan juga memanggil end-session endpoint Keycloak (melalui rute `/api/auth/keycloak-logout` dengan parameter `id_token_hint`). Hal ini menghentikan sesi SSO secara keseluruhan sehingga mencegah akses otomatis yang tidak sah.
+
+### Pengikatan sesi OTP lewat cookie (Issue #4)
+
+`otpId` yang dipegang klien adalah **capability token**: 32 byte acak
+(`base64url`, 43 karakter) yang tidak bisa dienumerasi. Itu sudah menutup
+penyapuan `otpId` milik orang lain, tapi tidak menutup token yang bocor lewat
+jalur di luar kuasa aplikasi — Referer, log reverse proxy, riwayat peramban,
+layar yang terlihat orang lain.
+
+Karena itu ada lapis kedua. Saat permintaan dibuat, server memasang cookie
+`tj_otp_sesi` berisi secret 32 byte:
+
+```
+HttpOnly · SameSite=Strict · Secure (produksi) · maxAge = TTL OTP
+```
+
+Hanya **SHA-256**-nya yang tersimpan di `otp_verifikasi.session_hash`, dan
+perbandingannya memakai `timingSafeEqual`. Secret-nya tidak pernah masuk
+`FormState`, jadi tidak pernah ikut ke komponen klien maupun payload RSC, dan
+tidak terbaca JavaScript mana pun.
+
+Akibatnya, memegang `otpId` saja tidak lagi cukup untuk:
+
+- menebak kode milik orang lain,
+- menghabiskan jatah percobaan korban — penolakan karena cookie **sengaja tidak**
+  menaikkan `attempts` dan tidak meng-`EXPIRED`-kan baris, karena kalau iya,
+  token bocor tetap bisa dipakai mematikan sesi korban,
+- memicu kirim ulang, yang berarti mengirim email ke alamat pelanggan sekaligus
+  mengganti kode yang sudah terlanjur mereka terima.
+
+Pesan penolakannya sama dengan kegagalan verifikasi lain, supaya tidak menjadi
+oracle "token ini hidup". Kolom `session_hash` nullable: baris yang dibuat
+sebelum kolom ini ada diperlakukan permisif agar pemiliknya tetap bisa
+menyelesaikan permintaan yang sedang berjalan saat deploy; baris baru selalu
+mengisinya.
 
 ### Tautan lacak & catatan publik/internal (Issue #6)
 

@@ -74,10 +74,10 @@ describe("B · OTP (Issue #4)", () => {
   });
 
   it("B1 — 5 tebakan salah, kirim ulang, tebakan ke-6 TETAP ditolak (cap tidak pulih)", async () => {
-    const { otpId } = await buatPermintaan();
+    const { otpId, sessionSecret: rahasia } = await buatPermintaan();
 
     for (let i = 1; i <= maxAttempts; i++) {
-      const r = await verifyPendingOtp(otpId, "000000", "10.0.0.1");
+      const r = await verifyPendingOtp(otpId, "000000", "10.0.0.1", rahasia);
       expect(r.ok).toBe(false);
     }
 
@@ -86,7 +86,7 @@ describe("B · OTP (Issue #4)", () => {
 
     // Kirim ulang: pada kode pra-perbaikan inilah `attempts` di-reset ke 0.
     // Sekarang gate menolaknya dan justru meng-EXPIRE permintaannya.
-    const resend = await resendPendingOtp(otpId, "10.0.0.1");
+    const resend = await resendPendingOtp(otpId, "10.0.0.1", rahasia);
     expect(resend.ok).toBe(false);
 
     row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
@@ -94,13 +94,13 @@ describe("B · OTP (Issue #4)", () => {
     expect(row!.status).toBe("EXPIRED");
 
     // Tebakan ke-6 tetap ditolak.
-    const keenam = await verifyPendingOtp(otpId, "000000", "10.0.0.1");
+    const keenam = await verifyPendingOtp(otpId, "000000", "10.0.0.1", rahasia);
     expect(keenam.ok).toBe(false);
     expect((keenam as { error: string }).error).toBe(VERIFY_FAILED);
   });
 
   it("B2 — kirim ulang kedua dalam 60 detik ditolak dengan hitungan mundur", async () => {
-    const { otpId } = await buatPermintaan();
+    const { otpId, sessionSecret: rahasia } = await buatPermintaan();
 
     // Kirim ulang pertama: lewatkan cooldown dari pembuatan dengan memundurkan
     // lastSentAt, supaya yang diuji benar-benar jeda antar KIRIM ULANG.
@@ -108,11 +108,11 @@ describe("B · OTP (Issue #4)", () => {
       where: { token: otpId },
       data: { lastSentAt: new Date(Date.now() - 120_000) },
     });
-    const pertama = await resendPendingOtp(otpId, "10.0.0.2");
+    const pertama = await resendPendingOtp(otpId, "10.0.0.2", rahasia);
     expect(pertama.ok).toBe(true);
 
     // Kirim ulang kedua, langsung — masih di dalam 60 detik.
-    const kedua = await resendPendingOtp(otpId, "10.0.0.2");
+    const kedua = await resendPendingOtp(otpId, "10.0.0.2", rahasia);
     expect(kedua.ok).toBe(false);
     expect(kedua.error).toMatch(/Mohon tunggu \d+ detik sebelum meminta kode baru\./);
 
@@ -122,14 +122,14 @@ describe("B · OTP (Issue #4)", () => {
   });
 
   it("B3 — kirim ulang ke-4 ditolak (cap 3)", async () => {
-    const { otpId } = await buatPermintaan();
+    const { otpId, sessionSecret: rahasia } = await buatPermintaan();
 
     for (let i = 1; i <= 3; i++) {
       await db.otpVerifikasi.update({
         where: { token: otpId },
         data: { lastSentAt: new Date(Date.now() - 120_000) },
       });
-      const r = await resendPendingOtp(otpId, `10.0.1.${i}`);
+      const r = await resendPendingOtp(otpId, `10.0.1.${i}`, rahasia);
       expect(r.ok, `kirim ulang ke-${i} seharusnya lolos`).toBe(true);
     }
 
@@ -145,7 +145,7 @@ describe("B · OTP (Issue #4)", () => {
     // gate resendCount, bukan rate limiter.
     flushRedis();
 
-    const keempat = await resendPendingOtp(otpId, "10.0.1.4");
+    const keempat = await resendPendingOtp(otpId, "10.0.1.4", rahasia);
     expect(keempat.ok).toBe(false);
     expect(keempat.error).toBe("Batas kirim ulang tercapai. Silakan ajukan permintaan baru.");
 
@@ -166,7 +166,7 @@ describe("B · OTP (Issue #4)", () => {
 
     // 3. kode salah pada permintaan yang hidup
     const a = await buatPermintaan();
-    const r3 = await verifyPendingOtp(a.otpId, "000000", "10.0.2.3");
+    const r3 = await verifyPendingOtp(a.otpId, "000000", "10.0.2.3", a.sessionSecret);
     pesan["kode salah"] = (r3 as { error: string }).error;
 
     // 4. permintaan sudah kedaluwarsa
@@ -175,7 +175,7 @@ describe("B · OTP (Issue #4)", () => {
       where: { token: b.otpId },
       data: { expiredAt: new Date(Date.now() - 60_000) },
     });
-    const r4 = await verifyPendingOtp(b.otpId, "000000", "10.0.2.4");
+    const r4 = await verifyPendingOtp(b.otpId, "000000", "10.0.2.4", b.sessionSecret);
     pesan["kedaluwarsa"] = (r4 as { error: string }).error;
 
     // 5. cap tebakan sudah habis
@@ -184,7 +184,7 @@ describe("B · OTP (Issue #4)", () => {
       where: { token: c.otpId },
       data: { attempts: maxAttempts },
     });
-    const r5 = await verifyPendingOtp(c.otpId, "000000", "10.0.2.5");
+    const r5 = await verifyPendingOtp(c.otpId, "000000", "10.0.2.5", c.sessionSecret);
     pesan["cap habis"] = (r5 as { error: string }).error;
 
     // 6. permintaan sudah dipakai (VERIFIED)
@@ -193,7 +193,7 @@ describe("B · OTP (Issue #4)", () => {
       where: { token: d.otpId },
       data: { status: "VERIFIED" },
     });
-    const r6 = await verifyPendingOtp(d.otpId, "000000", "10.0.2.6");
+    const r6 = await verifyPendingOtp(d.otpId, "000000", "10.0.2.6", d.sessionSecret);
     pesan["sudah dipakai"] = (r6 as { error: string }).error;
 
     const unik = new Set(Object.values(pesan));
@@ -209,12 +209,12 @@ describe("B · OTP (Issue #4)", () => {
   });
 
   it("B6 — throttle memberi pesan BERBEDA (disengaja, bukan bug)", async () => {
-    const { otpId } = await buatPermintaan();
+    const { otpId, sessionSecret: rahasia } = await buatPermintaan();
 
     // Habiskan throttle per-otpId (cap 10 per 10 menit).
     let pesanThrottle = "";
     for (let i = 1; i <= 15; i++) {
-      const r = await verifyPendingOtp(otpId, "000000", "10.0.3.1");
+      const r = await verifyPendingOtp(otpId, "000000", "10.0.3.1", rahasia);
       const err = (r as { error: string }).error;
       if (err === TOO_MANY) {
         pesanThrottle = err;
@@ -224,5 +224,85 @@ describe("B · OTP (Issue #4)", () => {
 
     expect(pesanThrottle).toBe(TOO_MANY);
     expect(pesanThrottle).not.toBe(VERIFY_FAILED);
+  });
+});
+
+/**
+ * Lapis kedua di atas capability token (pertanyaan terbuka reviewer di Issue #4:
+ * "apakah ownership check berbasis cookie sesi tetap perlu?").
+ *
+ * Skenario yang diuji: token BOCOR — lewat Referer, log proxy, riwayat peramban,
+ * atau layar yang terlihat orang lain — tapi cookie HttpOnly-nya tidak ikut.
+ */
+describe("B7 · pengikatan sesi lewat cookie HttpOnly (Issue #4)", () => {
+  it("token yang bocor TANPA cookie tidak bisa menebak kode", async () => {
+    const { otpId } = await buatPermintaan();
+
+    const penyerang = await verifyPendingOtp(otpId, "000000", "10.9.0.1");
+    expect(penyerang.ok).toBe(false);
+    // Pesannya sama dengan kegagalan lain — tidak jadi oracle "token ini hidup".
+    expect((penyerang as { error: string }).error).toBe(VERIFY_FAILED);
+  });
+
+  it("token yang bocor dengan cookie SALAH juga ditolak", async () => {
+    const { otpId } = await buatPermintaan();
+    const lain = await buatPermintaan(); // secret milik permintaan orang lain
+
+    const r = await verifyPendingOtp(otpId, "000000", "10.9.0.2", lain.sessionSecret);
+    expect(r.ok).toBe(false);
+    expect((r as { error: string }).error).toBe(VERIFY_FAILED);
+  });
+
+  it("penyerang tanpa cookie TIDAK bisa menghabiskan jatah percobaan korban", async () => {
+    const { otpId, sessionSecret } = await buatPermintaan();
+
+    // Dua puluh kali menyerang dengan token bocor, tanpa cookie.
+    for (let i = 0; i < 20; i++) {
+      await verifyPendingOtp(otpId, "000000", `10.9.1.${i % 5}`);
+    }
+
+    const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
+    // Inti item ini: cap korban tidak tergerus, dan barisnya tidak di-EXPIRED.
+    expect(row!.attempts).toBe(0);
+    expect(row!.status).toBe("PENDING");
+
+    // Pemilik sahnya masih bisa memakai permintaannya.
+    flushRedis();
+    const pemilik = await verifyPendingOtp(otpId, "000000", "10.9.1.99", sessionSecret);
+    expect(pemilik.ok).toBe(false); // kodenya memang salah
+    const sesudah = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
+    expect(sesudah!.attempts).toBe(1); // baru sekarang jatahnya terpakai
+  });
+
+  it("penyerang tanpa cookie tidak bisa memicu pengiriman email (email bombing)", async () => {
+    const { otpId, sessionSecret } = await buatPermintaan();
+    const sebelum = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
+
+    for (let i = 0; i < 3; i++) {
+      const r = await resendPendingOtp(otpId, `10.9.2.${i}`);
+      expect(r.ok).toBe(false);
+    }
+
+    const sesudah = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
+    expect(sesudah!.resendCount).toBe(0);
+    // Kode korban tidak diganti — kode yang sudah terlanjur ia terima tetap sah.
+    expect(sesudah!.kodeHash).toBe(sebelum!.kodeHash);
+
+    // Pemiliknya sendiri tetap bisa kirim ulang.
+    flushRedis();
+    await db.otpVerifikasi.update({
+      where: { token: otpId },
+      data: { lastSentAt: new Date(Date.now() - 120_000) },
+    });
+    expect((await resendPendingOtp(otpId, "10.9.2.99", sessionSecret)).ok).toBe(true);
+  });
+
+  it("secret disimpan sebagai hash, bukan nilai aslinya", async () => {
+    const { otpId, sessionSecret } = await buatPermintaan();
+    const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
+
+    expect(row!.sessionHash).toBeTruthy();
+    expect(row!.sessionHash).not.toBe(sessionSecret);
+    expect(row!.sessionHash).toMatch(/^[a-f0-9]{64}$/); // SHA-256 hex
   });
 });
