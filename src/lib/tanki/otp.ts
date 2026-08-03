@@ -40,9 +40,38 @@ export function maskEmail(email: string): string {
   return `${head}${"*".repeat(Math.max(1, u.length - head.length))}@${d}`;
 }
 
+/**
+ * Secret sesi OTP — lapis kedua di atas `token` (Issue #4).
+ *
+ * `token` adalah capability token yang ikut di form, jadi ia bisa bocor lewat
+ * jalur yang tidak dikuasai aplikasi: Referer, log reverse proxy, riwayat
+ * peramban, layar yang terlihat orang lain. Secret ini hanya hidup di cookie
+ * HttpOnly — tidak terbaca JavaScript, tidak pernah ikut di URL — dan hanya
+ * hash-nya yang tersimpan di database.
+ *
+ * Konsekuensinya: memegang `token` saja tidak lagi cukup untuk menebak kode,
+ * meminta kirim ulang, atau menghabiskan jatah percobaan orang lain.
+ */
+export const genSessionSecret = () => crypto.randomBytes(32).toString("base64url");
+const hashSecret = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
+
+/**
+ * Bandingkan hash dengan waktu tetap. Panjangnya sudah pasti sama (SHA-256 hex),
+ * tapi `===` pada string tetap keluar lebih cepat saat byte pertama berbeda.
+ */
+function secretCocok(sessionHash: string | null, secret: string | undefined): boolean {
+  // Baris yang dibuat sebelum kolom ini ada tidak punya hash — pemiliknya tetap
+  // harus bisa menyelesaikan permintaannya. Baris baru selalu mengisinya.
+  if (!sessionHash) return true;
+  if (!secret) return false;
+  const a = Buffer.from(hashSecret(secret));
+  const b = Buffer.from(sessionHash);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 type PendingInput = { noPelanggan: string; noHp: string; email: string; keluhan: string };
 export type PendingResult =
-  | { ok: true; otpId: string; emailMasked: string; ttl: number }
+  | { ok: true; otpId: string; sessionSecret: string; emailMasked: string; ttl: number }
   | { ok: false; error: string };
 
 export async function createPendingRequest(input: PendingInput): Promise<PendingResult> {
@@ -66,9 +95,11 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
     data: { status: "EXPIRED" },
   });
 
+  const sessionSecret = genSessionSecret();
   const row = await db.otpVerifikasi.create({
     data: {
       token: genToken(),
+      sessionHash: hashSecret(sessionSecret),
       noPelanggan: input.noPelanggan,
       email: input.email,
       noHp: input.noHp,
@@ -80,7 +111,15 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
   });
 
   await notifyOtp(input.email, code, ttl);
-  return { ok: true, otpId: row.token, emailMasked: maskEmail(input.email), ttl };
+  return {
+    ok: true,
+    otpId: row.token,
+    // Dikembalikan ke server action, yang memasangnya sebagai cookie HttpOnly.
+    // Tidak pernah sampai ke komponen klien.
+    sessionSecret,
+    emailMasked: maskEmail(input.email),
+    ttl,
+  };
 }
 
 export type VerifyResult = { ok: true; noTiket: string } | { ok: false; error: string };
@@ -89,6 +128,7 @@ export async function verifyPendingOtp(
   otpId: string,
   code: string,
   clientIp = "unknown",
+  sessionSecret?: string,
 ): Promise<VerifyResult> {
   if (!TOKEN_RE.test(otpId)) return { ok: false, error: VERIFY_FAILED };
 
@@ -104,6 +144,13 @@ export async function verifyPendingOtp(
   if (!row || row.status !== "PENDING")
     return { ok: false, error: VERIFY_FAILED };
   const id = row.id;
+
+  // Lapis kedua: cookie HttpOnly. Sengaja TIDAK menaikkan `attempts` dan tidak
+  // meng-EXPIRED-kan baris — kalau iya, siapa pun yang memegang token bocor
+  // tetap bisa menghabiskan jatah korban tanpa pernah menebak kode. Pesannya
+  // pun sama dengan kegagalan lain supaya tidak jadi oracle "token ini hidup".
+  if (!secretCocok(row.sessionHash, sessionSecret))
+    return { ok: false, error: VERIFY_FAILED };
 
   const byEmail = await rateLimit(
     `otp:verify:email:${row.email.toLowerCase()}`,
@@ -144,6 +191,7 @@ export async function verifyPendingOtp(
 export async function resendPendingOtp(
   otpId: string,
   clientIp = "unknown",
+  sessionSecret?: string,
 ): Promise<{ ok: boolean; error?: string }> {
   if (!TOKEN_RE.test(otpId)) return { ok: false, error: VERIFY_FAILED };
 
@@ -157,6 +205,12 @@ export async function resendPendingOtp(
   if (!row || row.status !== "PENDING")
     return { ok: false, error: VERIFY_FAILED };
   const id = row.id;
+
+  // Lapis kedua: cookie HttpOnly. Ini yang menutup sisa primitif email bombing
+  // pada Issue #4 — token yang bocor tidak lagi cukup untuk memicu pengiriman
+  // email ke alamat pelanggan, maupun mengganti kode yang sudah mereka terima.
+  if (!secretCocok(row.sessionHash, sessionSecret))
+    return { ok: false, error: VERIFY_FAILED };
 
   const byEmail = await rateLimit(
     `otp:resend:email:${row.email.toLowerCase()}`,
