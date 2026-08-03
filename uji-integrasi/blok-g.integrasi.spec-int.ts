@@ -122,3 +122,34 @@ afterAll(async () => {
     );
   }
 });
+
+/**
+ * Kriteria terima Issue #1 yang diminta reviewer secara eksplisit: `wil` dan
+ * `koderayon` nullable, sehingga baris NULL bisa hilang diam-diam dari
+ * breakdown dan membuat jumlah per-wilayah tidak lagi menutup total.
+ */
+describe("G · bucket NULL pada breakdown (catatan reviewer Issue #1)", () => {
+  it("baris tanpa wilayah/rayon masuk bucket eksplisit, dan jumlahnya menutup total", async () => {
+    const f = filter();
+    const hasil = await getLaporan(f);
+
+    const [{ n }] = await hitungManual(
+      "SELECT NULL AS k, COUNT(*) AS n FROM tiket WHERE wil IS NULL AND created_at >= ? AND created_at < ?",
+      f.start,
+      f.endExclusive,
+    );
+    expect(Number(n), "data uji harus memuat baris ber-wil NULL").toBeGreaterThan(0);
+
+    // Bucket eksplisit, bukan hilang diam-diam.
+    const bucketWil = hasil.perWilayah.find((b) => b.key === "(tanpa data)");
+    expect(bucketWil, `breakdown wilayah: ${JSON.stringify(hasil.perWilayah)}`).toBeTruthy();
+    expect(bucketWil!.total).toBe(Number(n));
+
+    const bucketRayon = hasil.perRayon.find((b) => b.key === "(tanpa data)");
+    expect(bucketRayon).toBeTruthy();
+
+    // Inti kriterianya: tidak ada baris yang menguap.
+    expect(hasil.perWilayah.reduce((a, b) => a + b.total, 0)).toBe(hasil.total);
+    expect(hasil.perRayon.reduce((a, b) => a + b.total, 0)).toBe(hasil.total);
+  });
+});
