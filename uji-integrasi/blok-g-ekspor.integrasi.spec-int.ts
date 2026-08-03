@@ -96,8 +96,10 @@ describe("G3–G5 · ekspor laporan (Issue #1)", () => {
     expect(buf.byteLength).toBeGreaterThan(1000);
 
     // Dibuka sungguhan dengan ExcelJS: kalau rusak, ini melempar.
+    // Cast diperlukan karena tipe Buffer bawaan ExcelJS mengacu ke definisi
+    // lama dan tidak cocok dengan Buffer<ArrayBuffer> di @types/node terbaru.
     const wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(buf);
+    await wb.xlsx.load(buf as unknown as Parameters<typeof wb.xlsx.load>[0]);
 
     const ws = wb.worksheets[0];
     expect(ws).toBeTruthy();
