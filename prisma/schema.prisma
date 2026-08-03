@@ -105,7 +105,16 @@ model Tiket {
   @@index([status])
   @@index([noPelanggan])
   @@index([noHp])
-  @@index([createdAt])
+  /// Query utama modul Laporan (Issue #1): range scan `created_at`, lalu
+  /// dikelompokkan per status / wilayah / rayon. Dengan index single-column
+  /// `created_at` saja, pengelompokannya jatuh ke filesort — tidak terasa
+  /// sekarang, tapi tabel ini justru yang paling sering discan seiring tumbuh.
+  ///
+  /// `created_at` tetap menjadi kolom paling kiri, jadi kedua index ini juga
+  /// melayani seluruh query yang dulu memakai `@@index([createdAt])` —
+  /// karenanya index tunggal itu dihapus, bukan ditambahi.
+  @@index([createdAt, status])
+  @@index([createdAt, wil, koderayon])
   @@map("tiket")
 }
 
@@ -134,6 +143,19 @@ model OtpVerifikasi {
   // orang lain dan menyerang permintaan yang bukan miliknya. 32 byte acak
   // (base64url) tidak bisa ditebak. Lihat Issue #4.
   token       String    @unique @db.VarChar(64)
+  /// SHA-256 dari secret yang hanya ada di cookie HttpOnly milik browser
+  /// pemohon — lapis kedua di atas `token` (Issue #4).
+  ///
+  /// `token` adalah capability token: siapa pun yang memegangnya boleh
+  /// bertindak. Itu cukup melawan enumerasi, tapi tidak melawan token yang
+  /// bocor lewat jalur lain — Referer, log proxy, riwayat peramban, layar yang
+  /// terlihat orang lain. Dengan kolom ini, token saja tidak cukup: penyerang
+  /// juga harus memegang cookie yang tidak pernah terbaca JavaScript dan tidak
+  /// pernah ikut di URL.
+  ///
+  /// Nullable supaya baris yang dibuat sebelum kolom ini ada tetap bisa
+  /// diselesaikan pemiliknya; baris baru selalu mengisinya.
+  sessionHash String?   @map("session_hash") @db.VarChar(64)
   noPelanggan String    @map("no_pelanggan") @db.Char(9)
   email       String    @db.VarChar(150)
   noHp        String    @map("no_hp") @db.VarChar(20)
