@@ -68,8 +68,11 @@ node db/keycloak_local_setup.mjs        # buat realm DIAMOND, client tanki-jene,
 # salin AUTH_KEYCLOAK_SECRET yang dicetak → .env  (issuer = http://localhost:8080/realms/DIAMOND)
 ```
 
-- **Login uji**: buka `http://localhost:3000/dashboard` → diarahkan ke Keycloak lokal →
-  masuk sebagai **`operator` / `Operator123!`** (punya `app-tanki`, `tanki-operator-crud`, `tanki-admin`).
+- **Login uji**: buka `http://localhost:3000/dashboard` → diarahkan ke Keycloak lokal. Terdapat 4 akun matriks pengujian (kata sandi untuk seluruh akun: **`Operator123!`**):
+  - **`operator`**: role `app-tanki`, `tanki-operator-crud`, `tanki-admin` (Akses penuh & konfigurasi SMTP).
+  - **`operator-crud`**: role `app-tanki`, `tanki-operator-crud` (Kelola tiket, dispatch, armada).
+  - **`operator-readonly`**: role `app-tanki`, `tanki-operator-readonly` (Monitoring/Direksi, tanpa hak ubah).
+  - **`user-norole`**: tanpa role Tanki Je'ne' (Akses ditolak pada gerbang layout operator).
 - **Email uji**: SMTP diarahkan ke Mailpit (`127.0.0.1:1025`); lihat email masuk di
   **http://localhost:8025**. Admin Keycloak lokal: `admin` / `admin` (`http://localhost:8080`).
 
@@ -122,6 +125,40 @@ dan `pelanggan` — yang dihapus hanya kredensial sistem, bukan anonimisasi.
 > Saat instance produksi `DIAMOND` di VPS hidup kembali, cukup ganti
 > `AUTH_KEYCLOAK_ISSUER` & `AUTH_KEYCLOAK_SECRET` di `.env` ke nilai produksi
 > (lihat blok komentar di `.env`) dan provisioning via `db/keycloak_setup_tanki_client.mjs`.
+## Runbook: Deployment & Verifikasi Keycloak (Realm DIAMOND)
+
+Sistem menggunakan Keycloak terpusat pada realm `DIAMOND` yang digunakan bersama oleh beberapa aplikasi (mis. `pdam-hrms`, `pdam-hubungan-pelanggan`). Autorisasi aplikasi bergantung sepenuhnya pada validasi realm role `app-tanki` dan prefix `tanki-*`.
+
+### 1. Konfigurasi Variabel Lingkungan (`.env`)
+Pastikan variabel berikut disetel dengan benar di environment produksi / staging:
+```ini
+AUTH_KEYCLOAK_ID="tanki-jene"
+AUTH_KEYCLOAK_SECRET="<client_secret_hasil_provisioning>"
+AUTH_KEYCLOAK_ISSUER="https://diamond.pdammakassar.co.id/auth/realms/DIAMOND"
+```
+*Catatan: Pada pengembangan lokal via Docker, `AUTH_KEYCLOAK_ISSUER` bernilai `http://localhost:8080/realms/DIAMOND`.*
+
+Opsional, untuk mendiagnosis masalah role saat login:
+```ini
+AUTH_DEBUG="1"   # cetak role hasil autentikasi ke console
+```
+Biarkan tidak diset di produksi. Log jalur **gagal** (mis. `realm_access.roles` tidak ditemukan) tetap muncul tanpa flag ini karena tidak memuat identitas operator; yang dipagari hanya log jalur sukses.
+
+### 2. Prosedur Provisioning Client
+Untuk mendaftarkan atau memutakhirkan client confidential `tanki-jene` di realm produksi, jalankan skrip otentikasi admin:
+```bash
+KC_URL="https://diamond.pdammakassar.co.id/auth" \
+KC_REALM="DIAMOND" \
+KC_MASTER_USER="admin" \
+KC_MASTER_PASS="<password_admin_keycloak>" \
+node db/keycloak_setup_tanki_client.mjs
+```
+Skrip ini akan memvalidasi dan meng-upsert client confidential (menaktifkan PKCE `S256` dan logout redirect) serta memastikan 4 realm roles tersedia (`app-tanki`, `tanki-operator-crud`, `tanki-operator-readonly`, `tanki-admin`).
+
+### 3. Fitur Keamanan & Diagnostik OIDC
+- **Diagnostik Peran (Realm Roles):** Sistem mendekode atribut `realm_access.roles` langsung dari `access_token` Keycloak. Jika struktur token keliru atau peran hilang, server memverifikasi dengan mencatat log diagnostik di konsol (`[AUTH DIAGNOSTIC]`).
+- **Refresh Token Rotation:** Akses token Keycloak berumur pendek (5-15 menit). Callback NextAuth `jwt()` secara otomatis memperbarui token via `grant_type="refresh_token"`. Jika sesi di Keycloak dicabut atau berakhir, token ditandai dengan `RefreshTokenError` dan middleware akan memaksa operator login ulang.
+- **Federated Logout (OIDC RP-Initiated Logout):** Menekan tombol "Keluar" tidak hanya mematikan sesi cookie lokal NextAuth, melainkan juga memanggil end-session endpoint Keycloak (melalui rute `/api/auth/keycloak-logout` dengan parameter `id_token_hint`). Hal ini menghentikan sesi SSO secara keseluruhan sehingga mencegah akses otomatis yang tidak sah.
 
 ### Tautan lacak & catatan publik/internal (Issue #6)
 

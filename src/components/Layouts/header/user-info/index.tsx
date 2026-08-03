@@ -7,7 +7,7 @@ import {
   DropdownTrigger,
 } from "@/components/ui/dropdown";
 import { cn } from "@/lib/utils";
-import { signOut, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { LogOutIcon, UserIcon } from "./icons";
@@ -16,14 +16,13 @@ export function UserInfo() {
   const [isOpen, setIsOpen] = useState(false);
   const { data: session, status } = useSession();
 
-  async function handleLogout() {
+  function handleLogout() {
     setIsOpen(false);
-    const loadingId = toast.loading("Keluar...");
-    try {
-      await signOut({ callbackUrl: "/auth/sign-in" });
-    } finally {
-      toast.dismiss(loadingId);
-    }
+    toast.loading("Keluar dari sesi PDAM...");
+    // Navigasi penuh ke route server, yang membaca id_token dari JWT di sisi
+    // server, menghapus cookie sesi lokal, lalu meneruskan ke endpoint logout
+    // Keycloak. Klien sengaja tidak pernah memegang token maupun URL logoutnya.
+    window.location.href = "/api/auth/keycloak-logout?callbackUrl=%2Fauth%2Fsign-in";
   }
 
   if (status === "loading") {

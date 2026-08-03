@@ -13,9 +13,13 @@ const ROLES = [
   ["tanki-operator-readonly", "Read-only / Direksi"],
   ["tanki-admin", "Admin: konfigurasi + CRUD"],
 ];
-const TEST_USER = "operator";
 const TEST_PASS = "Operator123!";
-const TEST_ROLES = ["app-tanki", "tanki-operator-crud", "tanki-admin"];
+const TEST_ACCOUNTS = [
+  { username: "operator", email: "operator@tanki.local", firstName: "Operator", lastName: "Admin", roles: ["app-tanki", "tanki-operator-crud", "tanki-admin"], desc: "Full akses + konfigurasi admin" },
+  { username: "operator-crud", email: "operator.crud@tanki.local", firstName: "Operator", lastName: "CRUD", roles: ["app-tanki", "tanki-operator-crud"], desc: "Akses CRUD operasional (tanpa config admin)" },
+  { username: "operator-readonly", email: "operator.readonly@tanki.local", firstName: "Operator", lastName: "ReadOnly", roles: ["app-tanki", "tanki-operator-readonly"], desc: "Akses baca/monitoring (Direksi/Laporan)" },
+  { username: "user-norole", email: "user.norole@tanki.local", firstName: "User", lastName: "NoRole", roles: [], desc: "Akun DIAMOND tanpa role Tanki (harus ditolak oleh sistem)" },
+];
 
 const die = (m) => { console.error("ERROR:", m); process.exit(1); };
 
@@ -60,32 +64,48 @@ async function main() {
   const cid = (await (await fetch(`${A}/${REALM}/clients?clientId=tanki-jene`, { headers: H })).json())[0].id;
   const secret = (await (await fetch(`${A}/${REALM}/clients/${cid}/client-secret`, { headers: H })).json()).value;
 
-  // 5. test user (create or reuse) + password + roles
-  await fetch(`${A}/${REALM}/users`, {
-    method: "POST", headers: HJ,
-    body: JSON.stringify({
-      username: TEST_USER, enabled: true, emailVerified: true,
-      email: "operator@tanki.local", firstName: "Operator", lastName: "Tanki",
-    }),
-  });
-  const uid = (await (await fetch(`${A}/${REALM}/users?username=${TEST_USER}&exact=true`, { headers: H })).json())[0].id;
-  await fetch(`${A}/${REALM}/users/${uid}/reset-password`, {
-    method: "PUT", headers: HJ,
-    body: JSON.stringify({ type: "password", value: TEST_PASS, temporary: false }),
-  });
-  const roleReps = [];
-  for (const rn of TEST_ROLES) {
-    roleReps.push(await (await fetch(`${A}/${REALM}/roles/${rn}`, { headers: H })).json());
+  // 5. test users (create or reuse) + password + roles matrix
+  console.log("=== 5. Provisioning akun pengujian matriks role ===");
+  for (const acc of TEST_ACCOUNTS) {
+    await fetch(`${A}/${REALM}/users`, {
+      method: "POST", headers: HJ,
+      body: JSON.stringify({
+        username: acc.username, enabled: true, emailVerified: true,
+        email: acc.email, firstName: acc.firstName, lastName: acc.lastName,
+      }),
+    });
+    const uRes = await fetch(`${A}/${REALM}/users?username=${acc.username}&exact=true`, { headers: H });
+    const uJson = await uRes.json();
+    if (!uJson || uJson.length === 0) continue;
+    const uid = uJson[0].id;
+
+    await fetch(`${A}/${REALM}/users/${uid}/reset-password`, {
+      method: "PUT", headers: HJ,
+      body: JSON.stringify({ type: "password", value: TEST_PASS, temporary: false }),
+    });
+
+    if (acc.roles.length > 0) {
+      const roleReps = [];
+      for (const rn of acc.roles) {
+        const roleRes = await fetch(`${A}/${REALM}/roles/${rn}`, { headers: H });
+        roleReps.push(await roleRes.json());
+      }
+      const mapRes = await fetch(`${A}/${REALM}/users/${uid}/role-mappings/realm`, {
+        method: "POST", headers: HJ, body: JSON.stringify(roleReps),
+      });
+      console.log(`  user ${acc.username} (roles: ${acc.roles.join(",")}): HTTP ${mapRes.status}`);
+    } else {
+      console.log(`  user ${acc.username} (tanpa role Tanki Je'ne'): disiapkan`);
+    }
   }
-  r = await fetch(`${A}/${REALM}/users/${uid}/role-mappings/realm`, {
-    method: "POST", headers: HJ, body: JSON.stringify(roleReps),
-  });
-  console.log(`user ${TEST_USER} roles: HTTP ${r.status}`);
 
   console.log("\n=== DONE (lokal) ===");
   console.log(`Issuer:               ${KC}/realms/${REALM}`);
   console.log(`AUTH_KEYCLOAK_ID:     tanki-jene`);
   console.log(`AUTH_KEYCLOAK_SECRET= ${secret}`);
-  console.log(`Test login:           ${TEST_USER} / ${TEST_PASS}  (roles: ${TEST_ROLES.join(", ")})`);
+  console.log("\n=== Matriks Akun Uji Keycloak (Password semua akun: Operator123!) ===");
+  for (const acc of TEST_ACCOUNTS) {
+    console.log(`- ${acc.username.padEnd(18)} : ${acc.desc}`);
+  }
 }
 main();
