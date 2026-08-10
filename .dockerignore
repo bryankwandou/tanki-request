@@ -1,0 +1,11 @@
+node_modules
+.next
+.git
+.env
+.env*.local
+coverage
+*.tsbuildinfo
+# 37 MB dump master pelanggan — diimpor ke MySQL, bukan bagian dari image.
+pelanggan.sql
+.vscode
+.claude

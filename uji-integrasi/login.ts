@@ -7,7 +7,12 @@
  * dipalsukan. Yang diuji justru round-trip-nya.
  */
 
-const APP = "http://localhost:3000";
+/**
+ * Basis URL aplikasi yang diuji. Default tetap server dev di :3000, tapi bisa
+ * diarahkan ke container Docker (`APP_BASE_URL=http://localhost:3100`) supaya
+ * uji lapis 3 yang sama bisa dijalankan terhadap build produksi.
+ */
+const APP = process.env.APP_BASE_URL ?? "http://localhost:3000";
 
 /** Cookie jar sederhana: nama → nilai. */
 export class Jar {

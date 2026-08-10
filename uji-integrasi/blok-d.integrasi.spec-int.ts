@@ -8,7 +8,12 @@ import { describe, expect, it } from "vitest";
 
 import { createTrackingToken, verifyTrackingToken, TRACKING_LINK_TTL_MS } from "@/lib/tanki/tracking-link";
 
-const APP = "http://localhost:3000";
+/**
+ * Basis URL aplikasi yang diuji. Default tetap server dev di :3000, tapi bisa
+ * diarahkan ke container Docker (`APP_BASE_URL=http://localhost:3100`) supaya
+ * uji lapis 3 yang sama bisa dijalankan terhadap build produksi.
+ */
+const APP = process.env.APP_BASE_URL ?? "http://localhost:3000";
 const NO_TIKET = "TJ-UJI-0001";
 
 async function bukaLacak(t: string) {

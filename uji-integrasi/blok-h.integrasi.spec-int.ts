@@ -20,7 +20,12 @@ import { setConfig } from "@/lib/tanki/config";
 import { genNoTiket } from "@/lib/tanki/no-tiket";
 import { createTiket } from "@/lib/tanki/tiket";
 
-const APP = "http://localhost:3000";
+/**
+ * Basis URL aplikasi yang diuji. Default tetap server dev di :3000, tapi bisa
+ * diarahkan ke container Docker (`APP_BASE_URL=http://localhost:3100`) supaya
+ * uji lapis 3 yang sama bisa dijalankan terhadap build produksi.
+ */
+const APP = process.env.APP_BASE_URL ?? "http://localhost:3000";
 
 const redis = (...args: string[]) =>
   execFileSync("docker", ["exec", "tanki-redis", "redis-cli", ...args]).toString().trim();

@@ -1,4 +1,40 @@
 services:
+  # Aplikasi Next.js (build produksi). Dipisah lewat profile `app` supaya
+  # `docker compose up -d` untuk pengembangan tetap hanya menyalakan
+  # infrastruktur, dan `npm run dev` di host tidak berebut port 3000.
+  #
+  #   docker compose --profile app up -d --build app
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tanki-app
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      # Nama service Docker, bukan 127.0.0.1 — di dalam container, localhost
+      # menunjuk ke container itu sendiri.
+      DATABASE_URL: "mysql://tanki:password@mysql:3306/tanki_jene?allowPublicKeyRetrieval=true"
+      REDIS_URL: "redis://redis:6379"
+      AUTH_URL: "${AUTH_URL:-http://localhost:3100}"
+      AUTH_TRUST_HOST: "true"
+      AUTH_SECRET: "${AUTH_SECRET:?AUTH_SECRET wajib diisi di .env}"
+      CONFIG_ENCRYPTION_KEY: "${CONFIG_ENCRYPTION_KEY:?CONFIG_ENCRYPTION_KEY wajib diisi di .env}"
+      TRACKING_LINK_SECRET: "${TRACKING_LINK_SECRET:-}"
+      AUTH_KEYCLOAK_ISSUER: "${AUTH_KEYCLOAK_ISSUER:-}"
+      AUTH_KEYCLOAK_ID: "${AUTH_KEYCLOAK_ID:-}"
+      AUTH_KEYCLOAK_SECRET: "${AUTH_KEYCLOAK_SECRET:-}"
+      NEXT_PUBLIC_APP_URL: "${NEXT_PUBLIC_APP_URL:-http://localhost:3100}"
+      TRUSTED_PROXY_COUNT: "${TRUSTED_PROXY_COUNT:-1}"
+    ports:
+      # 3100 di host: 3000 sudah dipakai `npm run dev` saat pengembangan.
+      - "3100:3000"
+
   mysql:
     image: mysql:8
     container_name: tanki-mysql

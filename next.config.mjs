@@ -1,5 +1,9 @@
 /** @type {import("next").NextConfig} */
 const nextConfig = {
+  // Dibutuhkan image Docker: menghasilkan .next/standalone berisi server.js +
+  // hanya node_modules yang benar-benar terpakai. Tidak berpengaruh pada
+  // `next dev` maupun alur build yang sudah ada.
+  output: "standalone",
   images: {
     qualities: [75, 100],
     remotePatterns: [
