@@ -56,11 +56,22 @@ export function KonfigurasiForm({ cfg, hasPass }: { cfg: Cfg; hasPass: boolean }
               def={cfg.otp_max_attempts}
             />
             <Field label="Maks. permintaan / jam / pelanggan (1–20)" name="rate_limit_per_hour" def={cfg.rate_limit_per_hour} />
+            <Field
+              label="Jeda antar pengajuan / pelanggan (jam, 0–168; 0 = mati)"
+              name="submit_cooldown_hours"
+              def={cfg.submit_cooldown_hours}
+            />
           </div>
           <p className="mt-3 text-sm text-dark-5 dark:text-dark-6">
             Batas percobaan dihitung untuk seluruh umur satu permintaan dan{" "}
             <strong>tidak pulih saat pengguna meminta kode baru</strong>. Nilai di luar rentang
             yang tertulis akan disesuaikan otomatis ke batas terdekat saat disimpan.
+          </p>
+          <p className="mt-2 text-sm text-dark-5 dark:text-dark-6">
+            <strong>Jeda antar pengajuan</strong> dihitung dari tiket terakhir pelanggan di
+            database — berbeda dari batas per jam di atas, jeda ini tetap berlaku setelah
+            aplikasi atau Redis di-restart, dan tidak ikut lepas saat tiket sebelumnya
+            ditutup. Isi <code>0</code> untuk mematikannya (mis. saat krisis air).
           </p>
         </section>
 

@@ -1,7 +1,36 @@
 "use client";
 
 import { resendOtp, submitPermintaan, verifyOtp } from "@/app/(public)/actions";
+import { SalinTeks } from "@/components/tanki/salin-teks";
+import {
+  KUNCI_RIWAYAT,
+  bacaRiwayat,
+  tambahEntri,
+  tautanLacak,
+} from "@/lib/tanki/riwayat-lokal";
 import { useState, useTransition } from "react";
+
+/**
+ * Simpan tiket ke riwayat perangkat (butir 3.3 laporan review).
+ *
+ * Dibungkus try/catch: localStorage bisa dilarang kebijakan peramban atau penuh
+ * (QuotaExceededError). Permintaan pengguna SUDAH tersimpan di server pada
+ * titik ini, jadi kegagalan menyimpan salinan kenyamanan tidak boleh
+ * menampilkan error apa pun — apalagi menutupi nomor tiket yang baru terbit.
+ */
+function simpanRiwayatLokal(noTiket: string, noPelanggan: string) {
+  try {
+    const sekarang = bacaRiwayat(window.localStorage.getItem(KUNCI_RIWAYAT));
+    const baru = tambahEntri(sekarang, {
+      noTiket,
+      noPelanggan,
+      disimpanPada: Date.now(),
+    });
+    window.localStorage.setItem(KUNCI_RIWAYAT, JSON.stringify(baru));
+  } catch {
+    /* diabaikan — nomor tiket tetap tampil di layar dan dikirim lewat email */
+  }
+}
 
 const inputClass =
   "w-full rounded-xl border border-[#cbd5e1] bg-[#f8fafc] px-4 py-3 text-[#0a2540] outline-none transition focus:border-[#0284c7] focus:bg-white focus:ring-2 focus:ring-[#0284c7]/20";
@@ -12,6 +41,9 @@ export function PublicRequestForm() {
   const [otpId, setOtpId] = useState("");
   const [emailMasked, setEmailMasked] = useState("");
   const [noTiket, setNoTiket] = useState("");
+  // Disimpan saat submit supaya layar konfirmasi bisa menautkan langsung ke
+  // jalur lacak "No. Tiket + No. Pelanggan" tanpa meminta pengguna mengetik ulang.
+  const [noPelanggan, setNoPelanggan] = useState("");
   const [error, setError] = useState<string>();
   const [info, setInfo] = useState<string>();
   const [pending, start] = useTransition();
@@ -19,6 +51,8 @@ export function PublicRequestForm() {
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
+    const nop = String(fd.get("noPelanggan") ?? "").trim();
+    setNoPelanggan(nop);
     setError(undefined);
     start(async () => {
       const r = await submitPermintaan(fd);
@@ -28,6 +62,7 @@ export function PublicRequestForm() {
         setPhase("otp");
       } else if (r.status === "done") {
         setNoTiket(r.noTiket!);
+        simpanRiwayatLokal(r.noTiket!, nop);
         setPhase("done");
       } else setError(r.error);
     });
@@ -43,6 +78,7 @@ export function PublicRequestForm() {
       const r = await verifyOtp(fd);
       if (r.status === "done") {
         setNoTiket(r.noTiket!);
+        simpanRiwayatLokal(r.noTiket!, noPelanggan);
         setPhase("done");
       } else setError(r.error);
     });
@@ -71,13 +107,29 @@ export function PublicRequestForm() {
         <p className="mx-auto mt-1 max-w-xs text-sm text-[#0a2540]/70">
           Email Anda terverifikasi dan permintaan resmi masuk antrian. Nomor tiket:
         </p>
-        <p className="tj-display mt-3 text-2xl font-extrabold tracking-wide text-[#0284c7]">{noTiket}</p>
-        <a
-          href="/lacak"
-          className="mt-5 inline-block rounded-xl bg-[#0284c7] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0369a1]"
-        >
-          Lacak permintaan ini
-        </a>
+        <p className="tj-display mt-3 select-all text-2xl font-extrabold tracking-wide text-[#0284c7]">
+          {noTiket}
+        </p>
+
+        {/* Butir 3.3 — nomor tiket tidak lagi hanya "tampil sekali lalu hilang". */}
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+          <SalinTeks teks={noTiket} className="bg-white" />
+          <a
+            href={
+              noPelanggan
+                ? tautanLacak({ noTiket, noPelanggan, disimpanPada: Date.now() })
+                : "/lacak"
+            }
+            className="inline-block rounded-xl bg-[#0284c7] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0369a1]"
+          >
+            Lacak permintaan ini
+          </a>
+        </div>
+
+        <p className="mt-4 text-xs text-[#0a2540]/55">
+          Nomor ini juga kami kirim ke email Anda, dan tersimpan di peramban
+          perangkat ini agar muncul otomatis di halaman lacak.
+        </p>
       </div>
     );
   }

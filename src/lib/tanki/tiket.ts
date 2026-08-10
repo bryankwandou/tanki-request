@@ -1,6 +1,9 @@
 import { db } from "@/lib/db";
-import { ACTIVE_STATUSES } from "@/lib/tanki/status";
+import { configNumber, getConfig } from "@/lib/tanki/config";
 import { notifyTiketCreated } from "@/lib/tanki/notify";
+import { genNoTiket } from "@/lib/tanki/no-tiket";
+import { evaluateCooldown } from "@/lib/tanki/pengajuan-guard";
+import { ACTIVE_STATUSES } from "@/lib/tanki/status";
 
 export type CreateTiketInput = {
   noPelanggan: string;
@@ -12,17 +15,6 @@ export type CreateTiketInput = {
 export type CreateTiketResult =
   | { ok: true; noTiket: string }
   | { ok: false; error: string };
-
-function pad(n: number) {
-  return n.toString().padStart(2, "0");
-}
-
-function genNoTiket(): string {
-  const d = new Date();
-  const ymd = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-  const rand = Math.floor(Math.random() * 1296).toString(36).toUpperCase().padStart(4, "0");
-  return `TJ-${ymd}-${rand}`;
-}
 
 export async function createTiket(
   input: CreateTiketInput,
@@ -52,6 +44,21 @@ export async function createTiket(
       error: `Masih ada permintaan aktif (${aktif.noTiket}, status ${aktif.status}). Mohon tunggu hingga selesai.`,
     };
   }
+
+  // 2b. Cooldown antar pengajuan (butir 3.4 laporan review).
+  //
+  // Guard di atas hanya berlaku selama tiket sebelumnya belum ditutup. Tanpa
+  // cooldown, pelanggan yang tiketnya baru saja SELESAI bisa langsung mengantre
+  // lagi, berulang kali sehari. Dihitung dari tiket TERAKHIR apa pun statusnya,
+  // jadi membatalkan permintaan sendiri pun tidak mereset jatah.
+  const cooldownJam = configNumber(await getConfig(), "submit_cooldown_hours");
+  const terakhir = await db.tiket.findFirst({
+    where: { noPelanggan: input.noPelanggan },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  const cooldown = evaluateCooldown(terakhir?.createdAt ?? null, Date.now(), cooldownJam);
+  if (!cooldown.allow) return { ok: false, error: cooldown.error };
 
   // 3. Buat tiket + riwayat awal dalam satu transaksi (FR-07).
   for (let attempt = 0; attempt < 5; attempt++) {

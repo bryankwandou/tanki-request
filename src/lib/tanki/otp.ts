@@ -9,6 +9,7 @@ import {
   TOO_MANY,
   VERIFY_FAILED,
 } from "@/lib/tanki/otp-policy";
+import { evaluateCooldown } from "@/lib/tanki/pengajuan-guard";
 import { rateLimit } from "@/lib/tanki/rate-limit";
 import { ACTIVE_STATUSES } from "@/lib/tanki/status";
 import { createTiket } from "@/lib/tanki/tiket";
@@ -85,6 +86,23 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
     return { ok: false, error: `Masih ada permintaan aktif (${aktif.noTiket}). Mohon tunggu hingga selesai.` };
 
   const cfg = await getConfig();
+
+  // Cooldown antar pengajuan (butir 3.4). createTiket() memeriksanya lagi —
+  // itu tempat penegakan yang sebenarnya, karena ia juga melindungi jalur
+  // non-OTP. Pemeriksaan di sini murni supaya pengguna tahu SEBELUM kami
+  // mengirimi mereka email kode yang pada akhirnya tidak bisa dipakai.
+  const terakhir = await db.tiket.findFirst({
+    where: { noPelanggan: input.noPelanggan },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  const cooldown = evaluateCooldown(
+    terakhir?.createdAt ?? null,
+    Date.now(),
+    configNumber(cfg, "submit_cooldown_hours"),
+  );
+  if (!cooldown.allow) return { ok: false, error: cooldown.error };
+
   const length = configNumber(cfg, "otp_length");
   const ttl = configNumber(cfg, "otp_ttl_minutes");
   const code = genCode(length);

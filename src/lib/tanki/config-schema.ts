@@ -16,6 +16,13 @@ export const CONFIG_DEFAULTS = {
   otp_length: "6",
   otp_max_attempts: "5", // FR-30 — percobaan salah per permintaan (tidak pulih saat kirim ulang)
   rate_limit_per_hour: "3",
+  /**
+   * Jeda wajib antar pengajuan untuk satu No. Pelanggan, dalam jam
+   * (butir 3.4 laporan review UX & keamanan). "0" mematikan cooldown.
+   * Berbeda dari rate_limit_per_hour: dihitung dari `created_at` tiket
+   * terakhir di database, jadi tidak hilang saat Redis/proses restart.
+   */
+  submit_cooldown_hours: "24",
 
   // --- Template email (FR-22/FR-32) ---
   // Placeholder ditulis {{nama}} dan diisi renderTemplate() di notify.ts.
@@ -57,6 +64,10 @@ export const NUMERIC_BOUNDS: Record<string, { min: number; max: number }> = {
   otp_length: { min: 4, max: 8 },
   otp_max_attempts: { min: 3, max: 10 },
   rate_limit_per_hour: { min: 1, max: 20 },
+  // Batas bawah 0 (= mati) memang disengaja: PDAM harus bisa mematikan cooldown
+  // saat musim kemarau, ketika satu pelanggan wajar mengajukan berkali-kali.
+  // Batas atas seminggu supaya salah ketik tidak mengunci pelanggan sebulan.
+  submit_cooldown_hours: { min: 0, max: 168 },
 };
 
 /**
@@ -68,7 +79,12 @@ export function configNumber(cfg: Record<string, string>, key: ConfigKey): numbe
   const bounds = NUMERIC_BOUNDS[key];
   const fallback = Number(CONFIG_DEFAULTS[key]);
   const raw = Number(cfg[key]);
-  const value = Number.isFinite(raw) && raw > 0 ? raw : fallback;
+  // Batas bawah menentukan apakah 0 adalah nilai yang sah. Untuk otp_length dkk
+  // (min ≥ 1), "0" tetap berarti "isi rusak → pakai default". Untuk
+  // submit_cooldown_hours (min 0), "0" adalah pilihan admin yang sah
+  // ("matikan cooldown") dan tidak boleh diam-diam berubah jadi 24 jam.
+  const batasBawah = bounds?.min ?? 1;
+  const value = Number.isFinite(raw) && raw >= batasBawah ? raw : fallback;
   if (!bounds) return value;
   return Math.min(bounds.max, Math.max(bounds.min, Math.floor(value)));
 }
