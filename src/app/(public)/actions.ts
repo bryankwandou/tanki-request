@@ -3,6 +3,12 @@
 import { getConfig } from "@/lib/tanki/config";
 import { createPendingRequest, resendPendingOtp, verifyPendingOtp } from "@/lib/tanki/otp";
 import { extractClientIp, rateLimit } from "@/lib/tanki/rate-limit";
+import {
+  COOKIE_SESI_PELANGGAN,
+  UMUR_SESI_MS,
+  bacaSesi,
+  buatSesi,
+} from "@/lib/tanki/sesi-pelanggan";
 import { createTiket } from "@/lib/tanki/tiket";
 import { cookies, headers } from "next/headers";
 import { z } from "zod";
@@ -33,6 +39,43 @@ async function getOtpCookie(): Promise<string | undefined> {
 
 async function clearOtpCookie() {
   (await cookies()).delete(OTP_COOKIE);
+}
+
+/**
+ * Terbitkan sesi pelanggan (butir 3.6 & 3.8).
+ *
+ * Dipanggil HANYA setelah kode OTP terverifikasi — pada titik itu warga sudah
+ * membuktikan menguasai email yang terdaftar pada permintaan ini, bukti yang
+ * sama yang akan diminta alur login mana pun.
+ */
+async function terbitkanSesiPelanggan(nop: string) {
+  try {
+    (await cookies()).set(COOKIE_SESI_PELANGGAN, buatSesi(nop, Date.now()), {
+      httpOnly: true,
+      // Lax, bukan Strict: pengguna yang mengeklik tautan lacak dari email
+      // harus tetap dikenali. Cookie ini hanya membuka data miliknya sendiri
+      // dan tidak pernah dipakai untuk aksi yang mengubah apa pun.
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: Math.floor(UMUR_SESI_MS / 1000),
+    });
+  } catch {
+    // Sesi adalah kenyamanan. Kegagalan memasangnya tidak boleh membatalkan
+    // tiket yang sudah terbit.
+  }
+}
+
+/** No. Pelanggan dari sesi, untuk auto-fill & riwayat. null bila belum masuk. */
+export async function nopSesi(): Promise<string | null> {
+  const c = (await cookies()).get(COOKIE_SESI_PELANGGAN)?.value;
+  const r = bacaSesi(c, Date.now());
+  return r.ok ? r.nop : null;
+}
+
+/** Keluar — dipakai tombol "Keluar" di halaman riwayat. */
+export async function keluarSesiPelanggan() {
+  (await cookies()).delete(COOKIE_SESI_PELANGGAN);
 }
 
 export type FormState = {
@@ -109,6 +152,11 @@ export async function verifyOtp(formData: FormData): Promise<FormState> {
 
   // Sesi selesai — cookie tidak perlu hidup sampai TTL habis.
   await clearOtpCookie();
+
+  // Butir 3.6 & 3.8 — email sudah terbukti; terbitkan sesi supaya kunjungan
+  // berikutnya tidak perlu mengetik ulang apa pun.
+  if (r.noPelanggan) await terbitkanSesiPelanggan(r.noPelanggan);
+
   return { status: "done", noTiket: r.noTiket };
 }
 

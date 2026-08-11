@@ -24,10 +24,12 @@ const SOPIR_UJI = "Sopir Uji Blok L";
 
 let nosamb = "";
 let noTiket = "";
-let tiketId = 0n;
-let penugasanId = 0n;
-let kendaraanId = 0n;
-let sopirId = 0n;
+// BigInt lewat konstruktor, bukan literal `0n`: target tsconfig repo ini masih
+// di bawah ES2020 dan literal BigInt ditolak tsc.
+let tiketId = BigInt(0);
+let penugasanId = BigInt(0);
+let kendaraanId = BigInt(0);
+let sopirId = BigInt(0);
 
 const buka = async (qs: string) => {
   const r = await fetch(`${APP}/lacak?${qs}`, {

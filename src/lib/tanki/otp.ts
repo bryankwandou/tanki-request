@@ -160,7 +160,11 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
   };
 }
 
-export type VerifyResult = { ok: true; noTiket: string } | { ok: false; error: string };
+export type VerifyResult =
+  // noPelanggan ikut dikembalikan supaya server action bisa menerbitkan sesi
+  // pelanggan (butir 3.6/3.8) tanpa mengambilnya lagi dari database.
+  | { ok: true; noTiket: string; noPelanggan: string }
+  | { ok: false; error: string };
 
 export async function verifyPendingOtp(
   otpId: string,
@@ -245,7 +249,7 @@ export async function verifyPendingOtp(
   if (!res.ok) return { ok: false, error: res.error };
 
   await db.otpVerifikasi.update({ where: { id }, data: { status: "VERIFIED" } });
-  return { ok: true, noTiket: res.noTiket };
+  return { ok: true, noTiket: res.noTiket, noPelanggan: row.noPelanggan };
 }
 
 export async function resendPendingOtp(

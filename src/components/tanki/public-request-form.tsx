@@ -36,14 +36,14 @@ const inputClass =
   "w-full rounded-xl border border-[#cbd5e1] bg-[#f8fafc] px-4 py-3 text-[#0a2540] outline-none transition focus:border-[#0284c7] focus:bg-white focus:ring-2 focus:ring-[#0284c7]/20";
 const labelClass = "mb-1.5 block text-sm font-semibold text-[#0a2540]";
 
-export function PublicRequestForm() {
+export function PublicRequestForm({ defaultNoPelanggan = "" }: { defaultNoPelanggan?: string }) {
   const [phase, setPhase] = useState<"form" | "otp" | "done">("form");
   const [otpId, setOtpId] = useState("");
   const [emailMasked, setEmailMasked] = useState("");
   const [noTiket, setNoTiket] = useState("");
   // Disimpan saat submit supaya layar konfirmasi bisa menautkan langsung ke
   // jalur lacak "No. Tiket + No. Pelanggan" tanpa meminta pengguna mengetik ulang.
-  const [noPelanggan, setNoPelanggan] = useState("");
+  const [noPelanggan, setNoPelanggan] = useState(defaultNoPelanggan);
   const [error, setError] = useState<string>();
   const [info, setInfo] = useState<string>();
   const [pending, start] = useTransition();
@@ -191,7 +191,15 @@ export function PublicRequestForm() {
 
       <div>
         <label className={labelClass}>No. Pelanggan</label>
-        <input name="noPelanggan" inputMode="numeric" maxLength={9} required placeholder="9 digit, contoh: 197600003" className={inputClass} />
+        <input
+          name="noPelanggan"
+          inputMode="numeric"
+          maxLength={9}
+          required
+          defaultValue={defaultNoPelanggan}
+          placeholder="9 digit, contoh: 197600003"
+          className={inputClass}
+        />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

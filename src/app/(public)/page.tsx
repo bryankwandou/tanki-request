@@ -1,4 +1,6 @@
 import { PublicRequestForm } from "@/components/tanki/public-request-form";
+import { nopSesi } from "@/app/(public)/actions";
+import Link from "next/link";
 
 const STEPS = [
   {
@@ -15,7 +17,11 @@ const STEPS = [
   },
 ];
 
-export default function PublicHome() {
+export default async function PublicHome() {
+  // Butir 3.6 — pengguna yang pernah menyelesaikan verifikasi email tidak
+  // perlu mengetik ulang No. Pelanggan-nya.
+  const nop = await nopSesi();
+
   return (
     <>
       {/* HERO */}
@@ -56,9 +62,19 @@ export default function PublicHome() {
               Ajukan Permintaan
             </h2>
             <p className="mb-6 mt-1 text-sm text-[#0a2540]/60">
-              Isi data di bawah, butuh ±1 menit.
+              {nop
+                ? "Data pelanggan Anda sudah terisi otomatis."
+                : "Isi data di bawah, butuh ±1 menit."}
             </p>
-            <PublicRequestForm />
+            <PublicRequestForm defaultNoPelanggan={nop ?? ""} />
+            {nop && (
+              <p className="mt-4 text-center text-xs text-[#0a2540]/55">
+                Masuk sebagai pelanggan <strong>{nop}</strong> ·{" "}
+                <Link href="/riwayat" className="font-semibold text-[#0284c7] hover:underline">
+                  Lihat riwayat permintaan
+                </Link>
+              </p>
+            )}
           </div>
         </div>
 
