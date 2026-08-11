@@ -25,6 +25,30 @@ model Pelanggan {
   @@map("pelanggan")
 }
 
+/// Kontak pelanggan — pelengkap master, butir 3.4 laporan review.
+///
+/// Tabel master `pelanggan` hasil impor PDAM TIDAK punya kolom nomor HP, jadi
+/// permintaan laporan untuk "cocokkan dengan nomor HP terdaftar" tidak bisa
+/// dipenuhi dari sana. Tabel ini wadahnya, dipisah supaya:
+///
+///   - `pelanggan` tetap bisa di-drop & diimpor ulang dari dump PDAM tanpa
+///     ikut membuang kontak yang sudah dikumpulkan loket;
+///   - pengisiannya bisa bertahap — sistem tetap jalan untuk pelanggan yang
+///     kontaknya belum ada (lihat src/lib/tanki/verifikasi-hp.ts).
+///
+/// Diisi dari sisi PDAM (impor atau loket), bukan dari form publik — kalau
+/// warga bisa mendaftarkan nomornya sendiri lewat form, verifikasinya tidak
+/// memverifikasi apa pun.
+model PelangganKontak {
+  nosamb    String   @id @db.Char(9)
+  noHp      String   @map("no_hp") @db.VarChar(20)
+  sumber    String?  @db.VarChar(40)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([noHp])
+  @@map("pelanggan_kontak")
+}
+
 // ---------------------------------------------------------------------------
 // Transaksi
 // ---------------------------------------------------------------------------

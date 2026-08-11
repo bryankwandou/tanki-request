@@ -23,6 +23,14 @@ export const CONFIG_DEFAULTS = {
    * terakhir di database, jadi tidak hilang saat Redis/proses restart.
    */
   submit_cooldown_hours: "24",
+  /**
+   * Mode ketat pencocokan No. HP (butir 3.4). "false" = pelanggan yang belum
+   * punya kontak terdaftar tetap boleh mengajukan (perilaku lama); "true" =
+   * tanpa kontak terdaftar, ditolak. Dinyalakan admin SETELAH data kontak
+   * pelanggan dianggap lengkap — menyalakannya terlalu dini mengunci warga
+   * yang datanya belum sempat dikumpulkan loket.
+   */
+  verifikasi_hp_wajib: "false",
 
   // --- Template email (FR-22/FR-32) ---
   // Placeholder ditulis {{nama}} dan diisi renderTemplate() di notify.ts.

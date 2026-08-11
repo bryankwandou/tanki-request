@@ -61,6 +61,7 @@ export async function saveKonfigurasi(
     otp_max_attempts: num("otp_max_attempts"),
     rate_limit_per_hour: num("rate_limit_per_hour"),
     submit_cooldown_hours: num("submit_cooldown_hours"),
+    verifikasi_hp_wajib: bool("verifikasi_hp_wajib"),
     tpl_otp_subject: tpl("tpl_otp_subject"),
     tpl_otp_body: tpl("tpl_otp_body"),
     tpl_tiket_subject: tpl("tpl_tiket_subject"),

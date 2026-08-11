@@ -13,6 +13,7 @@ import { AUDIT, catatAudit } from "@/lib/tanki/audit";
 import { delayGagalMs, tidur } from "@/lib/tanki/otp-delay";
 import { evaluateCooldown } from "@/lib/tanki/pengajuan-guard";
 import { rateLimit } from "@/lib/tanki/rate-limit";
+import { verifikasiHp } from "@/lib/tanki/verifikasi-hp";
 import { ACTIVE_STATUSES } from "@/lib/tanki/status";
 import { createTiket } from "@/lib/tanki/tiket";
 
@@ -80,6 +81,23 @@ export type PendingResult =
 export async function createPendingRequest(input: PendingInput): Promise<PendingResult> {
   const pelanggan = await db.pelanggan.findUnique({ where: { nosamb: input.noPelanggan } });
   if (!pelanggan) return { ok: false, error: "Nomor Pelanggan tidak ditemukan pada data PDAM." };
+
+  const cfgAwal = await getConfig();
+
+  // Cocokkan No. HP dengan kontak terdaftar (butir 3.4). createTiket()
+  // memeriksanya lagi — itu penegakan yang sebenarnya. Di sini supaya penolakan
+  // terjadi SEBELUM kami mengirim email kode ke alamat pihak yang belum tentu
+  // berhak; tanpa ini, form berubah jadi alat mengirimi orang email tak diminta.
+  const kontak = await db.pelangganKontak.findUnique({
+    where: { nosamb: input.noPelanggan },
+    select: { noHp: true },
+  });
+  const hp = verifikasiHp(
+    kontak?.noHp ?? null,
+    input.noHp,
+    cfgAwal.verifikasi_hp_wajib === "true",
+  );
+  if (!hp.cocok) return { ok: false, error: hp.error };
 
   const aktif = await db.tiket.findFirst({
     where: { noPelanggan: input.noPelanggan, status: { in: [...ACTIVE_STATUSES] } },

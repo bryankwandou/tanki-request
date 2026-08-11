@@ -61,7 +61,23 @@ export function KonfigurasiForm({ cfg, hasPass }: { cfg: Cfg; hasPass: boolean }
               name="submit_cooldown_hours"
               def={cfg.submit_cooldown_hours}
             />
+            <label className="flex items-center gap-2 self-end text-sm">
+              <input
+                type="checkbox"
+                name="verifikasi_hp_wajib"
+                defaultChecked={cfg.verifikasi_hp_wajib === "true"}
+              />
+              <span className="text-dark dark:text-dark-6">Wajibkan No. HP terdaftar</span>
+            </label>
           </div>
+          <p className="mt-3 text-sm text-dark-5 dark:text-dark-6">
+            <strong>Wajibkan No. HP terdaftar:</strong> No. HP yang diketik warga dicocokkan
+            dengan tabel <code>pelanggan_kontak</code>. Selama kotak ini <em>mati</em>,
+            pelanggan yang kontaknya belum terdata tetap bisa mengajukan — pencocokan hanya
+            berlaku bagi yang datanya sudah ada. Nyalakan <em>setelah</em> data kontak
+            pelanggan lengkap; menyalakannya terlalu dini akan mengunci warga yang nomornya
+            belum sempat dikumpulkan loket.
+          </p>
           <p className="mt-3 text-sm text-dark-5 dark:text-dark-6">
             Batas percobaan dihitung untuk seluruh umur satu permintaan dan{" "}
             <strong>tidak pulih saat pengguna meminta kode baru</strong>. Nilai di luar rentang

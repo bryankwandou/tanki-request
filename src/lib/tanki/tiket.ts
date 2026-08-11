@@ -4,6 +4,7 @@ import { notifyTiketCreated } from "@/lib/tanki/notify";
 import { genNoTiket } from "@/lib/tanki/no-tiket";
 import { evaluateCooldown } from "@/lib/tanki/pengajuan-guard";
 import { ACTIVE_STATUSES } from "@/lib/tanki/status";
+import { verifikasiHp } from "@/lib/tanki/verifikasi-hp";
 
 export type CreateTiketInput = {
   noPelanggan: string;
@@ -29,6 +30,23 @@ export async function createTiket(
       error: "Nomor Pelanggan tidak ditemukan pada data PDAM.",
     };
   }
+
+  // 1b. Cocokkan No. HP dengan kontak terdaftar PDAM (butir 3.4).
+  //
+  // Inilah yang menutup "siapa pun yang tahu No. Pelanggan orang lain bisa
+  // mengajukan atas nama mereka". Berlaku hanya untuk pelanggan yang kontaknya
+  // SUDAH ada, kecuali admin menyalakan mode ketat — lihat verifikasi-hp.ts.
+  const cfgHp = await getConfig();
+  const kontak = await db.pelangganKontak.findUnique({
+    where: { nosamb: input.noPelanggan },
+    select: { noHp: true },
+  });
+  const hp = verifikasiHp(
+    kontak?.noHp ?? null,
+    input.noHp,
+    cfgHp.verifikasi_hp_wajib === "true",
+  );
+  if (!hp.cocok) return { ok: false, error: hp.error };
 
   // 2. Cegah duplikasi permintaan aktif (FR-12).
   const aktif = await db.tiket.findFirst({
