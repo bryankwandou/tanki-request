@@ -216,6 +216,39 @@ URI benar-benar mencakup `/api/auth/callback/keycloak` sekaligus **tidak** memua
 yang dipakai bersama `pdam-hrms` dan `pdam-hubungan-pelanggan`, dan aman
 dijalankan berulang. Pasangannya yang menulis adalah `keycloak_setup_tanki_client.mjs`.
 
+#### Keadaan realm produksi per 11 Agu 2026 (hasil pemeriksaan tanpa kredensial)
+
+Tiga hal di bawah sudah bisa dipastikan dari luar, tanpa password admin, karena
+metadata OIDC bersifat publik:
+
+| Yang diperiksa | Hasil |
+|---|---|
+| `https://diamond.pdammakassar.co.id/auth` hidup | **YA** — HTTP 200 |
+| Realm `DIAMOND` mengumumkan PKCE `S256` | **YA** |
+| Client `tanki-jene` ada di realm produksi | **YA** — endpoint authorize membalas `Invalid parameter: redirect_uri`, bukan `Client not found`; balasan `Client not found` hanya muncul bila client-nya memang tidak ada |
+
+Sisa checklist Issue #2 — apakah client-nya *confidential*, apakah PKCE
+diwajibkan di level client, apakah redirect URI sudah benar dan tidak memuat
+`*`, dan apakah keempat realm role `tanki-*` ada — **tidak bisa dipastikan dari
+luar.** Semuanya hanya terbaca lewat Admin API, yang menuntut `KC_MASTER_PASS`.
+
+Password itu sengaja tidak ada di repositori ini. Realm `DIAMOND` dipakai
+bersama `pdam-hrms` dan `pdam-hubungan-pelanggan`, dan PRD §11.5 menetapkan
+bahwa penambahan client dan realm role `tanki-*` dikoordinasikan dengan admin
+Keycloak PDAM selaku pemilik instance. Mengubah client di realm bersama tanpa
+koordinasi itu berisiko memutus login dua sistem lain yang sedang melayani.
+
+Begitu password admin tersedia, satu perintah menutup sisa checklist:
+
+```bash
+KC_URL="https://diamond.pdammakassar.co.id/auth" \
+KC_MASTER_PASS="<password_admin_keycloak>" \
+node db/keycloak_verifikasi.mjs      # keluar 0 = seluruh checklist Issue #2 terbukti
+```
+
+Skrip yang sama sudah **LULUS 18/18** terhadap realm DIAMOND lokal, jadi yang
+belum terjadi adalah pemeriksaannya, bukan kesiapan alatnya.
+
 ### 3. Fitur Keamanan & Diagnostik OIDC
 - **Diagnostik Peran (Realm Roles):** Sistem mendekode atribut `realm_access.roles` langsung dari `access_token` Keycloak. Jika struktur token keliru atau peran hilang, server memverifikasi dengan mencatat log diagnostik di konsol (`[AUTH DIAGNOSTIC]`).
 - **Refresh Token Rotation:** Akses token Keycloak berumur pendek (5-15 menit). Callback NextAuth `jwt()` secara otomatis memperbarui token via `grant_type="refresh_token"`. Jika sesi di Keycloak dicabut atau berakhir, token ditandai dengan `RefreshTokenError` dan middleware akan memaksa operator login ulang.
