@@ -89,6 +89,17 @@ enum OtpStatus {
   EXPIRED
 }
 
+/// Untuk apa sebuah kode OTP diterbitkan.
+///
+/// Dipisah tegas karena akibatnya berbeda jauh: kode TIKET membuat permintaan
+/// mobil tangki, kode MASUK hanya menerbitkan sesi baca-saja. Tanpa pembeda
+/// ini, kode yang diminta untuk "masuk" bisa dipakai menyelesaikan pembuatan
+/// tiket, dan sebaliknya.
+enum OtpTujuan {
+  TIKET
+  MASUK
+}
+
 enum NotifJenis {
   OTP
   TIKET
@@ -185,6 +196,8 @@ model OtpVerifikasi {
   noHp        String    @map("no_hp") @db.VarChar(20)
   keluhan     String    @db.Text
   kodeHash    String    @map("kode_hash") @db.VarChar(255)
+  /// Lihat enum OtpTujuan. Default TIKET supaya baris lama tetap bermakna sama.
+  tujuan      OtpTujuan @default(TIKET)
   expiredAt   DateTime  @map("expired_at")
   // Percobaan verifikasi GAGAL sepanjang umur permintaan ini. Sengaja TIDAK
   // di-reset saat kirim ulang — reset itulah yang membuat cap-nya bisa dilewati

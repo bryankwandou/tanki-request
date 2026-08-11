@@ -35,12 +35,24 @@ export default function PublicLayout({ children }: PropsWithChildren) {
             </span>
           </Link>
 
-          <Link
-            href="/lacak"
-            className="rounded-full border border-[#bae6fd] px-3.5 py-2 text-xs font-semibold text-[#0369a1] transition hover:bg-[#e0f2fe] sm:px-4 sm:text-sm"
-          >
-            Lacak Permintaan
-          </Link>
+          <div className="flex items-center gap-2">
+            {/*
+              Butir 3.6 — masuk bersifat OPSIONAL, jadi ia berdampingan dengan
+              lacak, bukan menggantikannya dan bukan gerbang di depan apa pun.
+            */}
+            <Link
+              href="/masuk"
+              className="rounded-full px-3 py-2 text-xs font-semibold text-[#0369a1] transition hover:bg-[#e0f2fe] sm:px-3.5 sm:text-sm"
+            >
+              Masuk
+            </Link>
+            <Link
+              href="/lacak"
+              className="rounded-full border border-[#bae6fd] px-3.5 py-2 text-xs font-semibold text-[#0369a1] transition hover:bg-[#e0f2fe] sm:px-4 sm:text-sm"
+            >
+              Lacak Permintaan
+            </Link>
+          </div>
         </div>
       </header>
 

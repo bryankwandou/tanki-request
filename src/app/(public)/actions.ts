@@ -9,7 +9,9 @@ import {
   bacaSesi,
   buatSesi,
 } from "@/lib/tanki/sesi-pelanggan";
+import { mintaKodeMasuk, verifikasiKodeMasuk } from "@/lib/tanki/otp-masuk";
 import { createTiket } from "@/lib/tanki/tiket";
+import { redirect } from "next/navigation";
 import { cookies, headers } from "next/headers";
 import { z } from "zod";
 
@@ -162,4 +164,72 @@ export async function verifyOtp(formData: FormData): Promise<FormState> {
 
 export async function resendOtp(otpId: string): Promise<{ ok: boolean; error?: string }> {
   return resendPendingOtp(otpId, await clientIp(), await getOtpCookie());
+}
+
+// ---------------------------------------------------------------------------
+// Masuk tanpa mengajukan permintaan (butir 3.6)
+// ---------------------------------------------------------------------------
+
+/** Cookie pengikat sesi OTP alur MASUK — dipisah dari alur tiket. */
+const MASUK_COOKIE = "tj_masuk_sesi";
+
+export type MasukState = {
+  status: "idle" | "otp" | "error";
+  error?: string;
+  otpId?: string;
+  emailMasked?: string;
+};
+
+const skemaMasuk = z.object({
+  noPelanggan: z.string().trim().regex(/^\d{9}$/, "Nomor Pelanggan harus 9 digit angka."),
+  email: z.string().trim().email("Email tidak valid."),
+});
+
+export async function mintaKodeMasukAction(formData: FormData): Promise<MasukState> {
+  const parsed = skemaMasuk.safeParse({
+    noPelanggan: formData.get("noPelanggan"),
+    email: formData.get("email"),
+  });
+  if (!parsed.success)
+    return { status: "error", error: parsed.error.issues[0]?.message ?? "Input tidak valid." };
+
+  const r = await mintaKodeMasuk(parsed.data.noPelanggan, parsed.data.email, await clientIp());
+  if (!r.ok) return { status: "error", error: r.error };
+
+  /**
+   * Balasan sama persis baik data cocok maupun tidak (lihat MASUK_GAGAL).
+   *
+   * Saat tidak cocok, `otpId` null: tidak ada kode yang dikirim, tapi pengguna
+   * tetap dibawa ke layar isi kode. Itu disengaja — halaman ini tidak boleh
+   * memberi tahu apakah sebuah No. Pelanggan pernah memakai layanan.
+   */
+  if (r.otpId && r.sessionSecret) {
+    (await cookies()).set(MASUK_COOKIE, r.sessionSecret, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: r.ttl * 60,
+    });
+  }
+
+  return {
+    status: "otp",
+    otpId: r.otpId ?? "",
+    emailMasked: r.emailMasked ?? parsed.data.email,
+  };
+}
+
+export async function verifikasiMasukAction(formData: FormData): Promise<MasukState> {
+  const otpId = String(formData.get("otpId") ?? "");
+  const code = String(formData.get("code") ?? "").trim();
+  if (!code) return { status: "otp", otpId, error: "Masukkan kode verifikasi." };
+
+  const secret = (await cookies()).get(MASUK_COOKIE)?.value;
+  const r = await verifikasiKodeMasuk(otpId, code, await clientIp(), secret);
+  if (!r.ok) return { status: "otp", otpId, error: r.error };
+
+  (await cookies()).delete(MASUK_COOKIE);
+  await terbitkanSesiPelanggan(r.noPelanggan);
+  redirect("/riwayat");
 }

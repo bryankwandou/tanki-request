@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { canWrite } from "@/lib/auth/roles";
 import { db } from "@/lib/db";
 import { notifyStatusChange } from "@/lib/tanki/notify";
+import { catatKontakDariTiket } from "@/lib/tanki/kontak";
 import { parseKoordinat } from "@/lib/tanki/lokasi";
 import { STATUS_LABEL } from "@/lib/tanki/status";
 import { revalidatePath } from "next/cache";
@@ -115,6 +116,11 @@ export async function createPenugasan(
     }
     throw e;
   }
+
+  // Butir 3.4 — menugaskan armada berarti petugas menerima permintaan ini
+  // sebagai sah, jadi nomor pelapornya layak jadi kontak terdaftar.
+  // Hanya mengisi yang masih kosong; tidak pernah menimpa.
+  await catatKontakDariTiket(tiket.noPelanggan, tiket.noHp);
 
   await notifyStatusChange(
     { id: tiket.id, noTiket: tiket.noTiket, email: tiket.email },

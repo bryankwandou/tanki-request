@@ -196,6 +196,17 @@ async function getBackend(): Promise<Backend> {
 // ---------------------------------------------------------------------------
 // API publik
 // ---------------------------------------------------------------------------
+/**
+ * Berapa kali degradasi ke in-memory sudah terjadi sejak proses hidup.
+ *
+ * Penting untuk operator: dengan REDIS_URL diset dan beberapa instance
+ * berjalan, jatuh ke in-memory berarti batas yang berlaku menjadi PER-INSTANCE
+ * — dengan 4 instance, batas 5 percobaan efektif menjadi 20. Itu keadaan yang
+ * harus terlihat, bukan yang diam-diam berlalu.
+ */
+let _degradasi = 0;
+export const jumlahDegradasiRedis = () => _degradasi;
+
 export async function rateLimit(key: string, max: number, windowMs: number): Promise<RateResult> {
   const backend = await getBackend();
   try {
@@ -206,6 +217,15 @@ export async function rateLimit(key: string, max: number, windowMs: number): Pro
     if (backend !== memBackend) {
       _redis = null;
       _redisRetryAt = Date.now() + REDIS_RETRY_COOLDOWN_MS;
+      _degradasi++;
+      // Dicetak sekali per periode cooldown, bukan per request: saat Redis
+      // tumbang, jalur ini dilewati setiap permintaan dan log akan membanjir.
+      console.error(
+        "[RATE-LIMIT] Redis tidak terjangkau — turun ke in-memory. " +
+          "Bila aplikasi berjalan lebih dari satu instance, batas rate limit " +
+          "kini berlaku PER-INSTANCE dan efektif melonggar sebanyak jumlah instance. " +
+          `Degradasi ke-${_degradasi} sejak proses hidup.`,
+      );
       return memBackend.hit(key, max, windowMs);
     }
     // In-memory tidak seharusnya gagal; kalau toh gagal, jangan kunci pengguna sah.
@@ -216,6 +236,7 @@ export async function rateLimit(key: string, max: number, windowMs: number): Pro
 /** Hanya untuk test — kosongkan state in-memory antar kasus uji. */
 export function __resetRateLimitStore() {
   lru.clear();
+  _degradasi = 0;
   _redis = null;
   _redisRetryAt = 0;
   _redisConnecting = null;

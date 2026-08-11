@@ -1,6 +1,7 @@
 import { Card, PageHeader, StatCard } from "@/components/tanki/ui";
 import { db } from "@/lib/db";
 import { ringkasanAudit } from "@/lib/tanki/audit";
+import { jumlahDegradasiRedis } from "@/lib/tanki/rate-limit";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Dashboard" };
@@ -106,6 +107,17 @@ export default async function DashboardPage() {
             Percobaan yang berpola serangan (butir 3.2 laporan review). Angka
             kecil itu normal — warga salah ketik. Lonjakan mendadak tidak.
           </p>
+          {jumlahDegradasiRedis() > 0 && (
+            /*
+             * Degradasi rate limiter harus terlihat operator: dengan beberapa
+             * instance, batas yang berlaku jadi PER-INSTANCE dan efektif
+             * melonggar sebanyak jumlah instance.
+             */
+            <p className="mb-3 rounded-lg bg-red-light-6 px-3 py-2 text-sm text-red dark:bg-red/10">
+              Redis sempat tidak terjangkau ({jumlahDegradasiRedis()}×) — rate
+              limit turun ke penyimpanan lokal proses. Periksa Redis.
+            </p>
+          )}
           {audit.length === 0 ? (
             <p className="text-sm text-dark-5 dark:text-dark-6">
               Tidak ada percobaan mencurigakan tercatat.

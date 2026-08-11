@@ -143,6 +143,7 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
       noHp: input.noHp,
       keluhan: input.keluhan,
       kodeHash: hash(code),
+      tujuan: "TIKET",
       expiredAt: new Date(Date.now() + ttl * 60_000),
       status: "PENDING",
     },
@@ -188,7 +189,9 @@ export async function verifyPendingOtp(
   if (!byId.allowed) return { ok: false, error: TOO_MANY };
 
   const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
-  if (!row || row.status !== "PENDING")
+  // Kode MASUK tidak boleh menyelesaikan pembuatan tiket. Pesannya disamakan
+  // dengan kegagalan lain supaya tidak jadi oracle keadaan baris.
+  if (!row || row.status !== "PENDING" || row.tujuan !== "TIKET")
     return { ok: false, error: VERIFY_FAILED };
   const id = row.id;
 
@@ -266,7 +269,7 @@ export async function resendPendingOtp(
   if (!byId.allowed) return { ok: false, error: TOO_MANY };
 
   const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
-  if (!row || row.status !== "PENDING")
+  if (!row || row.status !== "PENDING" || row.tujuan !== "TIKET")
     return { ok: false, error: VERIFY_FAILED };
   const id = row.id;
 

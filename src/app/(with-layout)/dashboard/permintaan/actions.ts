@@ -3,6 +3,7 @@
 import { auth } from "@/lib/auth";
 import { canWrite } from "@/lib/auth/roles";
 import { db } from "@/lib/db";
+import { STATUS_TEPERCAYA, catatKontakDariTiket } from "@/lib/tanki/kontak";
 import { notifyStatusChange } from "@/lib/tanki/notify";
 import {
   canTransition,
@@ -91,6 +92,16 @@ export async function updateStatus(
       }
     }
   });
+
+  /**
+   * Butir 3.4 — petugas baru saja menyatakan permintaan ini sah, jadi nomor HP
+   * pelapornya layak dijadikan kontak terdaftar. Inilah yang membuat basis data
+   * kontak terisi sendiri dari operasi sehari-hari, tanpa proyek pendataan
+   * terpisah. Hanya mengisi yang masih kosong; tidak pernah menimpa.
+   */
+  if (STATUS_TEPERCAYA.includes(newStatus as (typeof STATUS_TEPERCAYA)[number])) {
+    await catatKontakDariTiket(tiket.noPelanggan, tiket.noHp);
+  }
 
   // Catatan internal tidak ikut ke email. Tanpa ini penandanya tidak ada artinya:
   // catatan disembunyikan di /lacak tapi tetap terkirim ke kotak masuk pelapor.
