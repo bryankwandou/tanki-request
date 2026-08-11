@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { canWrite } from "@/lib/auth/roles";
 import { db } from "@/lib/db";
 import { notifyStatusChange } from "@/lib/tanki/notify";
+import { parseKoordinat } from "@/lib/tanki/lokasi";
 import { STATUS_LABEL } from "@/lib/tanki/status";
 import { revalidatePath } from "next/cache";
 
@@ -124,4 +125,54 @@ export async function createPenugasan(
   revalidatePath(`/dashboard/permintaan/${tiketId}`);
   revalidatePath("/dashboard");
   return { ok: true, message: `Penugasan dibuat untuk tiket ${tiket.noTiket}.` };
+}
+
+/**
+ * Perbarui posisi armada pada satu penugasan (butir 3.5 laporan review).
+ *
+ * Hanya penugasan yang BELUM selesai yang boleh diperbarui: posisi pada
+ * penugasan yang sudah ditutup tidak berarti apa-apa, dan membiarkannya
+ * bisa diubah membuka jalan memutar untuk mengubah riwayat.
+ */
+export async function updateLokasiArmada(
+  _p: ActionState,
+  fd: FormData,
+): Promise<ActionState> {
+  if (!(await requireWrite())) return { ok: false, error: "Tidak punya hak ubah." };
+
+  const id = String(fd.get("penugasanId") ?? "").trim();
+  if (!/^\d+$/.test(id)) return { ok: false, error: "Penugasan tidak valid." };
+
+  const teks = String(fd.get("lokasiTeks") ?? "").trim().slice(0, 200);
+  const koordinat = parseKoordinat(
+    String(fd.get("lokasiLat") ?? ""),
+    String(fd.get("lokasiLng") ?? ""),
+  );
+  if (!koordinat.ok) return { ok: false, error: koordinat.error };
+  if (!teks && koordinat.lat === null)
+    return { ok: false, error: "Isi keterangan posisi atau koordinat." };
+
+  const penugasan = await db.penugasan.findUnique({
+    where: { id: BigInt(id) },
+    select: { status: true },
+  });
+  if (!penugasan) return { ok: false, error: "Penugasan tidak ditemukan." };
+  if (penugasan.status === "SELESAI" || penugasan.status === "DIBATALKAN")
+    return { ok: false, error: "Penugasan sudah ditutup; posisi tidak bisa diubah." };
+
+  await db.penugasan.update({
+    where: { id: BigInt(id) },
+    data: {
+      lokasiTeks: teks || null,
+      lokasiLat: koordinat.lat,
+      lokasiLng: koordinat.lng,
+      // Stempel waktu diisi server, bukan dikirim klien: halaman publik
+      // memakainya untuk bilang "diperbarui X menit lalu", jadi ia harus
+      // menyatakan kapan datanya benar-benar masuk.
+      lokasiPada: new Date(),
+    },
+  });
+
+  revalidatePath("/dashboard/dispatch/penugasan");
+  return { ok: true, message: "Posisi armada diperbarui." };
 }

@@ -292,6 +292,23 @@ model Penugasan {
   jadwalSelesai DateTime?       @map("jadwal_selesai")
   status        PenugasanStatus @default(DIJADWALKAN)
   assignedBy    String?         @map("assigned_by") @db.VarChar(64)
+
+  /// Posisi armada terkini (butir 3.5 laporan review).
+  ///
+  /// Laporan meminta peta real-time seperti pelacakan paket, dan sekaligus
+  /// mencatat itu butuh GPS tracker di setiap mobil — perangkat yang belum
+  /// dimiliki PDAM. Tiga kolom ini adalah jalan tengah yang bisa hidup hari
+  /// ini: petugas/sopir memperbarui posisi lewat dashboard, warga melihatnya
+  /// di halaman lacak. Begitu unit ber-GPS, pengisi kolom ini tinggal diganti
+  /// dari input manual menjadi umpan perangkat — bentuk datanya sudah sama,
+  /// dan halaman publiknya tidak perlu diubah lagi.
+  lokasiTeks    String?         @map("lokasi_teks") @db.VarChar(200)
+  /// Desimal, bukan float: koordinat yang dibulatkan float bisa bergeser
+  /// puluhan meter. 8 angka di belakang koma ≈ presisi milimeter.
+  lokasiLat     Decimal?        @map("lokasi_lat") @db.Decimal(10, 8)
+  lokasiLng     Decimal?        @map("lokasi_lng") @db.Decimal(11, 8)
+  lokasiPada    DateTime?       @map("lokasi_pada")
+
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
 

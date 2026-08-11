@@ -2,6 +2,7 @@ import { RiwayatLokalPanel } from "@/components/tanki/riwayat-lokal-panel";
 import { AUDIT, catatAudit } from "@/lib/tanki/audit";
 import { extractClientIp, rateLimit } from "@/lib/tanki/rate-limit";
 import { parseLacak } from "@/lib/tanki/lacak-query";
+import { posisiBasi, tautanPeta, usiaPosisi } from "@/lib/tanki/lokasi";
 import { verifyTrackingToken } from "@/lib/tanki/tracking-link";
 import { db } from "@/lib/db";
 import { STATUS_LABEL } from "@/lib/tanki/status";
@@ -113,7 +114,29 @@ export default async function LacakPage({
           // Kolom disebut satu per satu. `include` akan menarik SELURUH kolom
           // skalar tiket — termasuk email dan no. HP pelapor — yang tidak
           // dibutuhkan halaman publik ini.
-          select: { id: true, noTiket: true, status: true, keluhan: true },
+          select: {
+            id: true,
+            noTiket: true,
+            status: true,
+            keluhan: true,
+            /**
+             * Posisi armada (butir 3.5). Hanya penugasan yang masih berjalan,
+             * dan HANYA kolom lokasi — identitas sopir dan nomor polisi tidak
+             * ikut ditarik; itu data petugas, bukan informasi yang dibutuhkan
+             * pelapor untuk tahu airnya sampai mana.
+             */
+            penugasan: {
+              where: { status: { in: ["DIJADWALKAN", "BERANGKAT"] } },
+              orderBy: { id: "desc" },
+              take: 1,
+              select: {
+                lokasiTeks: true,
+                lokasiLat: true,
+                lokasiLng: true,
+                lokasiPada: true,
+              },
+            },
+          },
         })
       : [];
 
@@ -303,6 +326,45 @@ export default async function LacakPage({
                       />
                     </div>
                     <p className="mt-2 text-sm text-[#0a2540]/60">{t.keluhan}</p>
+
+                    {/* Posisi armada — butir 3.5 */}
+                    {(() => {
+                      const pos = t.penugasan[0];
+                      if (!pos || (!pos.lokasiTeks && pos.lokasiLat === null)) return null;
+                      const usia = usiaPosisi(pos.lokasiPada, Date.now());
+                      const basi = posisiBasi(pos.lokasiPada, Date.now());
+                      return (
+                        <div className="mt-4 rounded-xl border border-[#e0f2fe] bg-[#f0f9ff] px-4 py-3">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[#0369a1]">
+                            Posisi armada
+                          </p>
+                          {pos.lokasiTeks && (
+                            <p className="mt-1 text-sm text-[#0a2540]">{pos.lokasiTeks}</p>
+                          )}
+                          {pos.lokasiLat !== null && pos.lokasiLng !== null && (
+                            <a
+                              href={tautanPeta(Number(pos.lokasiLat), Number(pos.lokasiLng))}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-1 inline-block text-sm font-semibold text-[#0284c7] hover:underline"
+                            >
+                              Lihat di peta →
+                            </a>
+                          )}
+                          {usia && (
+                            /*
+                             * Keterangan waktu WAJIB tampil. Tanpa itu, warga
+                             * membaca posisi tiga jam lalu sebagai posisi
+                             * sekarang lalu menyimpulkan mobilnya mangkrak.
+                             */
+                            <p className={`mt-1 text-xs ${basi ? "text-[#92400e]" : "text-[#0a2540]/50"}`}>
+                              Diperbarui {usia}
+                              {basi ? " — mungkin sudah tidak terkini" : ""}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {/* Droplet timeline */}
                     <ol className="mt-5 space-y-4">
