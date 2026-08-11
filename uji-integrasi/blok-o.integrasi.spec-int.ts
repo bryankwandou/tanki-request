@@ -141,6 +141,40 @@ describe("O · masuk dari ujung ke ujung (butir 3.6 & 3.8)", () => {
     expect(await r.text()).not.toContain(noTiket);
   });
 
+  it("O5 — tombol tetap bekerja saat diakses lewat penerusan port", async () => {
+    /**
+     * Regresi untuk bug yang ditemukan saat peragaan: seluruh tombol di situs
+     * mati dengan "Invalid Server Actions request", padahal halamannya tampil
+     * normal. Penyebabnya proxy mengisi `x-forwarded-host` dengan domain
+     * publiknya sementara browser tetap mengirim `Origin: localhost:3000`.
+     * Keduanya sah, tapi tidak sama, dan Next membatalkan aksinya.
+     *
+     * Kedua header di bawah SENGAJA dibuat berbeda — itulah inti bugnya.
+     * Membuatnya sama akan membuat uji ini selalu hijau dan tidak menjaga apa
+     * pun.
+     *
+     * Action id sengaja asal: yang diperiksa bukan aksinya berhasil, melainkan
+     * permintaannya LOLOS pemeriksaan asal-usul. Bila gerbangnya menolak,
+     * jawabannya "Invalid Server Actions request"; bila lolos, jawabannya
+     * "Server action not found" — dan itulah yang kita harapkan.
+     */
+    const host = new URL(APP).host;
+    const r = await fetch(`${APP}/masuk`, {
+      method: "POST",
+      headers: {
+        Origin: APP,
+        "X-Forwarded-Host": "bug-free-succotash-pjv4w6wg59xvh7vrr-3000.app.github.dev",
+        "Next-Action": "0".repeat(40),
+        "Content-Type": "text/plain;charset=UTF-8",
+      },
+      body: "[]",
+    });
+    const teks = await r.text();
+
+    expect(teks, `origin=${host}`).not.toMatch(/Invalid Server Actions request/i);
+    expect(teks).toMatch(/Server action not found/i);
+  });
+
   it("O4 — kode yang sama tidak bisa dipakai dua kali", async () => {
     flushRedis();
     await mailpitBersihkan();
