@@ -29,6 +29,7 @@ export default async function KonfigurasiPage() {
   // tidak pernah memuat password SMTP. Keberadaannya ditanyakan terpisah.
   const cfg = await getConfig();
   const hasPass = await hasStoredSecret("smtp_pass");
+  const hasWaToken = await hasStoredSecret("wa_api_token");
   const smtpBelumDiisi = !cfg.smtp_host;
   const kunciBelumDiset = !isEncryptionConfigured();
 
@@ -56,7 +57,7 @@ export default async function KonfigurasiPage() {
         </div>
       )}
 
-      <KonfigurasiForm cfg={cfg} hasPass={hasPass} />
+      <KonfigurasiForm cfg={cfg} hasPass={hasPass} hasWaToken={hasWaToken} />
     </>
   );
 }

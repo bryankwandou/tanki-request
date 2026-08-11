@@ -32,6 +32,18 @@ export const CONFIG_DEFAULTS = {
    */
   verifikasi_hp_wajib: "false",
 
+  // --- WhatsApp / SMS (butir 3.3 laporan review) ---
+  // Sengaja TIDAK mengikat satu vendor: PDAM belum menunjuk penyedia gateway,
+  // dan itu keputusan pengadaan. Yang diatur admin adalah URL, token, dan
+  // bentuk payload — pola yang diterima hampir semua gateway WA/SMS Indonesia.
+  wa_enabled: "false",
+  wa_api_url: "",
+  wa_api_token: "", // rahasia — disimpan terenkripsi, tidak pernah dikirim ke UI
+  wa_payload_template: '{"target":"{{no_hp}}","message":"{{pesan}}"}',
+  wa_tpl_tiket:
+    "Permintaan mobil tangki Anda diterima. Nomor tiket: {{no_tiket}}. " +
+    "Simpan nomor ini untuk melacak status permintaan Anda. — PDAM Kota Makassar",
+
   // --- Template email (FR-22/FR-32) ---
   // Placeholder ditulis {{nama}} dan diisi renderTemplate() di notify.ts.
   // Nilai di bawah = teks yang sebelumnya hardcoded, jadi perilaku default tidak berubah.
@@ -53,7 +65,7 @@ export const CONFIG_DEFAULTS = {
 } as const;
 
 export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
-export const SECRET_KEYS: ConfigKey[] = ["smtp_pass"];
+export const SECRET_KEYS: ConfigKey[] = ["smtp_pass", "wa_api_token"];
 
 /**
  * Batas nilai numerik yang diterima server.

@@ -112,6 +112,7 @@ export async function createTiket(
         id: created.id,
         noTiket: created.noTiket,
         email: created.email,
+        noHp: created.noHp,
       });
       return { ok: true, noTiket };
     } catch (e) {

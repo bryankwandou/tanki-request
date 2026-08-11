@@ -9,7 +9,15 @@ const cls =
 
 type Cfg = Record<string, string>;
 
-export function KonfigurasiForm({ cfg, hasPass }: { cfg: Cfg; hasPass: boolean }) {
+export function KonfigurasiForm({
+  cfg,
+  hasPass,
+  hasWaToken,
+}: {
+  cfg: Cfg;
+  hasPass: boolean;
+  hasWaToken: boolean;
+}) {
   const [s, save, saving] = useActionState(saveKonfigurasi, initial);
   const [ts, test, testing] = useActionState(testSmtp, initial);
 
@@ -89,6 +97,54 @@ export function KonfigurasiForm({ cfg, hasPass }: { cfg: Cfg; hasPass: boolean }
             aplikasi atau Redis di-restart, dan tidak ikut lepas saat tiket sebelumnya
             ditutup. Isi <code>0</code> untuk mematikannya (mis. saat krisis air).
           </p>
+        </section>
+
+        {/* WhatsApp / SMS — butir 3.3 laporan review */}
+        <section className="rounded-[10px] bg-white p-6 shadow-1 dark:bg-gray-dark">
+          <h2 className="mb-1 text-body-lg font-bold text-dark dark:text-white">
+            WhatsApp / SMS
+          </h2>
+          <p className="mb-4 text-sm text-dark-5 dark:text-dark-6">
+            Kanal <strong>tambahan</strong> untuk mengirim nomor tiket — email tetap jalan.
+            Sengaja tidak terikat satu vendor: isi URL dan bentuk payload sesuai gateway yang
+            dipakai PDAM (Wablas, Fonnte, Zenziva, Twilio, atau gateway internal). Selama URL
+            kosong, pengiriman dicatat sebagai <code>DILEWATI</code> — bukan diakui terkirim.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="flex items-center gap-2 self-end text-sm">
+              <input type="checkbox" name="wa_enabled" defaultChecked={cfg.wa_enabled === "true"} />
+              <span className="text-dark dark:text-dark-6">Aktifkan WA/SMS</span>
+            </label>
+            <Field
+              label="URL gateway"
+              name="wa_api_url"
+              def={cfg.wa_api_url}
+              placeholder="https://gateway.contoh.id/send"
+            />
+            <label className="flex flex-col gap-1 text-sm md:col-span-2">
+              <span className="text-dark-5 dark:text-dark-6">Token / API key</span>
+              <input
+                name="wa_api_token"
+                type="password"
+                placeholder={
+                  hasWaToken ? "•••••• (biarkan kosong = tidak berubah)" : "(belum diatur)"
+                }
+                className={cls}
+              />
+            </label>
+          </div>
+          <div className="mt-4 grid gap-4">
+            <TextArea
+              label="Bentuk payload JSON — placeholder: {{no_hp}} {{pesan}} {{token}}"
+              name="wa_payload_template"
+              def={cfg.wa_payload_template}
+            />
+            <TextArea
+              label="Isi pesan tiket baru — placeholder: {{no_tiket}}"
+              name="wa_tpl_tiket"
+              def={cfg.wa_tpl_tiket}
+            />
+          </div>
         </section>
 
         {/* Template email */}

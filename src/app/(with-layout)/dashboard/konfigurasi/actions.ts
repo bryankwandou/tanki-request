@@ -62,6 +62,10 @@ export async function saveKonfigurasi(
     rate_limit_per_hour: num("rate_limit_per_hour"),
     submit_cooldown_hours: num("submit_cooldown_hours"),
     verifikasi_hp_wajib: bool("verifikasi_hp_wajib"),
+    wa_enabled: bool("wa_enabled"),
+    wa_api_url: str("wa_api_url"),
+    wa_payload_template: tpl("wa_payload_template"),
+    wa_tpl_tiket: tpl("wa_tpl_tiket"),
     tpl_otp_subject: tpl("tpl_otp_subject"),
     tpl_otp_body: tpl("tpl_otp_body"),
     tpl_tiket_subject: tpl("tpl_tiket_subject"),
@@ -72,6 +76,9 @@ export async function saveKonfigurasi(
   // Password bersifat write-only: hanya update bila operator mengisi nilai baru.
   const pass = str("smtp_pass");
   if (pass) entries.smtp_pass = pass;
+  // Token gateway WA/SMS juga write-only, dengan alasan yang sama.
+  const waToken = str("wa_api_token");
+  if (waToken) entries.wa_api_token = waToken;
 
   try {
     await setConfig(entries, session?.user?.email);

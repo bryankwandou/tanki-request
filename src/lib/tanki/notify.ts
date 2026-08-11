@@ -8,6 +8,7 @@ import {
   resolveDelivery,
   shouldLogBody,
 } from "@/lib/tanki/notify-policy";
+import { kirimPesan, pesanTiketBaru } from "@/lib/tanki/pesan";
 import { trackingUrl } from "@/lib/tanki/tracking-link";
 import nodemailer from "nodemailer";
 
@@ -126,16 +127,38 @@ export async function notifyTiketCreated(t: {
   id: bigint;
   noTiket: string;
   email: string | null;
+  noHp?: string | null;
 }) {
   const { subject, body } = await template("tpl_tiket_subject", "tpl_tiket_body");
   const vars = { no_tiket: t.noTiket, tracking_url: safeTrackingUrl(t.noTiket) };
-  return sendEmail({
+  const hasil = await sendEmail({
     to: t.email,
     jenis: "TIKET",
     tiketId: t.id,
     subject: renderTemplate(subject, vars),
     body: renderTemplate(body, vars),
   });
+
+  /**
+   * WhatsApp/SMS sebagai kanal TAMBAHAN (butir 3.3), bukan pengganti email.
+   *
+   * Banyak pelanggan PDAM tidak membuka email tapi semuanya membuka WhatsApp,
+   * jadi nomor tiket yang "hanya tampil sekali di layar" kini punya salinan
+   * yang benar-benar sampai.
+   *
+   * Kegagalannya sengaja DITELAN: tiketnya sudah tersimpan dan email sudah
+   * jalan. Gateway pihak ketiga yang mati tidak boleh membatalkan permintaan
+   * air warga — jejaknya tetap ada di notifikasi_log.
+   */
+  if (t.noHp) {
+    try {
+      await kirimPesan({ noHp: t.noHp, pesan: await pesanTiketBaru(t.noTiket), tiketId: t.id });
+    } catch {
+      // Sudah tercatat di notifikasi_log oleh kirimPesan.
+    }
+  }
+
+  return hasil;
 }
 
 export async function notifyOtp(email: string, code: string, ttlMinutes: number) {

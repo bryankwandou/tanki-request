@@ -70,6 +70,32 @@ export async function setConfig(
   );
 }
 
+/**
+ * Baca satu nilai rahasia dalam bentuk aslinya.
+ *
+ * getConfig() selalu mengosongkan kolom rahasia karena hasilnya gampang ikut
+ * terserialisasi ke payload RSC. Fungsi ini jalan keluarnya untuk pemanggil
+ * sisi-server yang memang butuh nilainya (mis. token gateway WA/SMS).
+ *
+ * Dekripsi yang gagal mengembalikan null — diperlakukan sama seperti "belum
+ * diisi", bukan string kosong yang menutupi masalah kunci enkripsi.
+ */
+export async function getSecretConfig(key: ConfigKey): Promise<string | null> {
+  if (!isSecret(key)) {
+    throw new Error(`getSecretConfig dipanggil untuk kunci non-rahasia: ${key}`);
+  }
+  const c = await readRawConfig();
+  if (!c[key]) return null;
+  const plain = decryptSecret(c[key]);
+  if (plain === null) {
+    console.error(
+      `[KONFIGURASI] Nilai rahasia "${key}" gagal didekripsi — periksa CONFIG_ENCRYPTION_KEY.`,
+    );
+    return null;
+  }
+  return plain || null;
+}
+
 export type SmtpConfig = {
   host: string;
   port: number;
