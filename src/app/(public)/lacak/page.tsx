@@ -1,4 +1,5 @@
 import { RiwayatLokalPanel } from "@/components/tanki/riwayat-lokal-panel";
+import { AUDIT, catatAudit } from "@/lib/tanki/audit";
 import { extractClientIp, rateLimit } from "@/lib/tanki/rate-limit";
 import { parseLacak } from "@/lib/tanki/lacak-query";
 import { verifyTrackingToken } from "@/lib/tanki/tracking-link";
@@ -81,6 +82,17 @@ export default async function LacakPage({
     if (!rateLimited && q.kind === "tiket") {
       const rlTiket = await rateLimit(`lacak:tiket:ip:${ip}`, 10, 10 * 60_000);
       rateLimited = !rlTiket.allowed;
+    }
+
+    // Butir 3.2 — hanya pencarian yang SUDAH menabrak plafon yang dicatat.
+    // Mencatat setiap no-match akan menenggelamkan sinyalnya: warga yang salah
+    // ketik nomor sendiri jauh lebih banyak daripada penyerang.
+    if (rateLimited) {
+      await catatAudit({
+        jenis: AUDIT.LACAK_THROTTLE,
+        ip,
+        detail: q.kind === "tiket" ? "jalur nomor tiket" : "jalur pelanggan",
+      });
     }
   }
 

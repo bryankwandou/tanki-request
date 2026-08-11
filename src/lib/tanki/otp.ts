@@ -9,6 +9,8 @@ import {
   TOO_MANY,
   VERIFY_FAILED,
 } from "@/lib/tanki/otp-policy";
+import { AUDIT, catatAudit } from "@/lib/tanki/audit";
+import { delayGagalMs, tidur } from "@/lib/tanki/otp-delay";
 import { evaluateCooldown } from "@/lib/tanki/pengajuan-guard";
 import { rateLimit } from "@/lib/tanki/rate-limit";
 import { ACTIVE_STATUSES } from "@/lib/tanki/status";
@@ -153,7 +155,12 @@ export async function verifyPendingOtp(
   // Throttle per-IP dan per-otpId dijalankan SEBELUM query, supaya membanjiri
   // endpoint dengan token acak pun tetap terbatas dan tidak membebani database.
   const byIp = await rateLimit(`otp:verify:ip:${clientIp}`, THROTTLE.verifyIp.max, THROTTLE.verifyIp.windowMs);
-  if (!byIp.allowed) return { ok: false, error: TOO_MANY };
+  if (!byIp.allowed) {
+    // Satu IP menabrak plafon verifikasi adalah sinyal paling dini yang kita
+    // punya untuk brute-force; dicatat sebelum keluar.
+    await catatAudit({ jenis: AUDIT.OTP_THROTTLE, ip: clientIp });
+    return { ok: false, error: TOO_MANY };
+  }
 
   const byId = await rateLimit(`otp:verify:id:${otpId}`, THROTTLE.verifyId.max, THROTTLE.verifyId.windowMs);
   if (!byId.allowed) return { ok: false, error: TOO_MANY };
@@ -186,10 +193,27 @@ export async function verifyPendingOtp(
 
   if (row.attempts >= maxAttempts) {
     await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
+    await catatAudit({
+      jenis: AUDIT.OTP_CAP_HABIS,
+      subjek: row.email,
+      ip: clientIp,
+      detail: `attempts=${row.attempts} maks=${maxAttempts}`,
+    });
     return { ok: false, error: VERIFY_FAILED };
   }
   if (hash(code.trim()) !== row.kodeHash) {
     await db.otpVerifikasi.update({ where: { id }, data: { attempts: row.attempts + 1 } });
+    await catatAudit({ jenis: AUDIT.OTP_KODE_SALAH, subjek: row.email, ip: clientIp });
+
+    /**
+     * Delay progresif (butir 3.2) — DI SINI, bukan di jalur kegagalan lain.
+     *
+     * Titik ini hanya bisa dicapai oleh pihak yang sudah memegang cookie sesi
+     * yang cocok, jadi orang asing tidak bisa memakainya untuk menahan koneksi
+     * server (DoS). Ia dijalankan SETELAH `attempts` naik, supaya penyerang
+     * yang memutus koneksi di tengah delay tetap kehilangan satu jatah.
+     */
+    await tidur(delayGagalMs(row.attempts));
     return { ok: false, error: VERIFY_FAILED };
   }
 

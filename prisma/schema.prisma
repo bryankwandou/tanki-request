@@ -202,6 +202,30 @@ model NotifikasiLog {
   @@map("notifikasi_log")
 }
 
+/// Jejak percobaan yang MENCURIGAKAN, untuk deteksi anomali (butir 3.2
+/// laporan review UX & keamanan).
+///
+/// Bukan log aktivitas umum: hanya kegagalan yang berpola serangan yang
+/// dicatat, supaya tabelnya tetap kecil dan benar-benar dibaca.
+///
+/// `subjek` menyimpan HASH identitas (email / No. Pelanggan), bukan nilai
+/// aslinya. Pengelompokan "berapa kali subjek yang sama gagal" tetap bisa
+/// dilakukan, tanpa membuat tabel ini jadi tempat penampungan data pribadi
+/// baru yang ikut bocor kalau database dicuri.
+model AuditKeamanan {
+  id        BigInt   @id @default(autoincrement())
+  jenis     String   @db.VarChar(40)
+  subjek    String?  @db.VarChar(64)
+  ip        String?  @db.VarChar(64)
+  detail    String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// Query utamanya: "berapa kejadian jenis X dalam rentang waktu Y".
+  @@index([jenis, createdAt])
+  @@index([ip, createdAt])
+  @@map("audit_keamanan")
+}
+
 model Kendaraan {
   id             BigInt       @id @default(autoincrement())
   nopol          String       @unique @db.VarChar(20)

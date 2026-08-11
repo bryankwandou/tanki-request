@@ -1,5 +1,6 @@
 import { Card, PageHeader, StatCard } from "@/components/tanki/ui";
 import { db } from "@/lib/db";
+import { ringkasanAudit } from "@/lib/tanki/audit";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Dashboard" };
@@ -15,6 +16,14 @@ const STATUS_LABEL: Record<string, string> = {
   DIBATALKAN: "Dibatalkan",
 };
 
+/** Label manusiawi untuk jenis kejadian di audit_keamanan (butir 3.2). */
+const AUDIT_LABEL: Record<string, string> = {
+  OTP_KODE_SALAH: "Kode OTP salah",
+  OTP_CAP_HABIS: "Jatah tebakan habis",
+  OTP_THROTTLE: "Verifikasi diblokir throttle",
+  LACAK_THROTTLE: "Pencarian diblokir throttle",
+};
+
 const ACTIVE_STATUSES = [
   "DITERIMA",
   "TERVERIFIKASI",
@@ -24,12 +33,14 @@ const ACTIVE_STATUSES = [
 
 export default async function DashboardPage() {
   // Aggregate jumlah tiket per status (FR-36). Kosong = nol pada scaffold.
-  const [grouped, totalTiket, armadaTersedia, armadaBertugas] =
+  const [grouped, totalTiket, armadaTersedia, armadaBertugas, audit] =
     await Promise.all([
       db.tiket.groupBy({ by: ["status"], _count: { _all: true } }),
       db.tiket.count(),
       db.kendaraan.count({ where: { status: "TERSEDIA" } }),
       db.kendaraan.count({ where: { status: "BERTUGAS" } }),
+      // Butir 3.2 — log anomali tidak berguna kalau tidak pernah dilihat.
+      ringkasanAudit(24),
     ]);
 
   const countByStatus = Object.fromEntries(
@@ -87,6 +98,40 @@ export default async function DashboardPage() {
           </div>
         </Card>
 
+        <Card>
+          <h2 className="mb-1 text-body-lg font-bold text-dark dark:text-white">
+            Keamanan · 24 jam terakhir
+          </h2>
+          <p className="mb-4 text-sm text-dark-5 dark:text-dark-6">
+            Percobaan yang berpola serangan (butir 3.2 laporan review). Angka
+            kecil itu normal — warga salah ketik. Lonjakan mendadak tidak.
+          </p>
+          {audit.length === 0 ? (
+            <p className="text-sm text-dark-5 dark:text-dark-6">
+              Tidak ada percobaan mencurigakan tercatat.
+            </p>
+          ) : (
+            <dl className="space-y-2">
+              {audit.map((a) => (
+                <div key={a.jenis} className="flex items-center justify-between gap-4">
+                  <dt className="text-sm text-dark-5 dark:text-dark-6">
+                    {AUDIT_LABEL[a.jenis] ?? a.jenis}
+                  </dt>
+                  <dd
+                    className={`text-body-lg font-bold ${
+                      a.jumlah >= 50 ? "text-red" : "text-dark dark:text-white"
+                    }`}
+                  >
+                    {a.jumlah}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </Card>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4">
         <Card>
           <h2 className="mb-2 text-body-lg font-bold text-dark dark:text-white">
             Selamat datang 👋
