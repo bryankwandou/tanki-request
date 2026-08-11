@@ -1,11 +1,21 @@
 import crypto from "node:crypto";
 import { db } from "@/lib/db";
-import { getConfig } from "@/lib/tanki/config";
+import { configNumber, getConfig } from "@/lib/tanki/config";
 import { notifyOtp } from "@/lib/tanki/notify";
+import {
+  DEFAULT_RESEND_LIMITS,
+  evaluateResendGate,
+  THROTTLE,
+  TOO_MANY,
+  VERIFY_FAILED,
+} from "@/lib/tanki/otp-policy";
+import { AUDIT, catatAudit } from "@/lib/tanki/audit";
+import { delayGagalMs, tidur } from "@/lib/tanki/otp-delay";
+import { evaluateCooldown } from "@/lib/tanki/pengajuan-guard";
+import { rateLimit } from "@/lib/tanki/rate-limit";
+import { verifikasiHp } from "@/lib/tanki/verifikasi-hp";
 import { ACTIVE_STATUSES } from "@/lib/tanki/status";
 import { createTiket } from "@/lib/tanki/tiket";
-
-const MAX_ATTEMPTS = 5;
 
 function genCode(len: number): string {
   let c = "";
@@ -14,6 +24,19 @@ function genCode(len: number): string {
 }
 const hash = (code: string) => crypto.createHash("sha256").update(code).digest("hex");
 
+/**
+ * Identitas permintaan OTP yang dipegang klien.
+ *
+ * Row id bersifat sequential, jadi memakainya sebagai `otpId` publik berarti
+ * penyerang dapat menghitung id milik orang lain dan menyerang permintaan yang
+ * bukan miliknya — termasuk menghabiskan cap percobaan korban. 32 byte acak
+ * menutup itu. Lihat Issue #4.
+ */
+const genToken = () => crypto.randomBytes(32).toString("base64url");
+
+/** Bentuk token yang sah — dipakai untuk menolak input sampah sebelum query. */
+const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+
 export function maskEmail(email: string): string {
   const [u, d] = email.split("@");
   if (!d) return email;
@@ -21,14 +44,60 @@ export function maskEmail(email: string): string {
   return `${head}${"*".repeat(Math.max(1, u.length - head.length))}@${d}`;
 }
 
+/**
+ * Secret sesi OTP — lapis kedua di atas `token` (Issue #4).
+ *
+ * `token` adalah capability token yang ikut di form, jadi ia bisa bocor lewat
+ * jalur yang tidak dikuasai aplikasi: Referer, log reverse proxy, riwayat
+ * peramban, layar yang terlihat orang lain. Secret ini hanya hidup di cookie
+ * HttpOnly — tidak terbaca JavaScript, tidak pernah ikut di URL — dan hanya
+ * hash-nya yang tersimpan di database.
+ *
+ * Konsekuensinya: memegang `token` saja tidak lagi cukup untuk menebak kode,
+ * meminta kirim ulang, atau menghabiskan jatah percobaan orang lain.
+ */
+export const genSessionSecret = () => crypto.randomBytes(32).toString("base64url");
+const hashSecret = (s: string) => crypto.createHash("sha256").update(s).digest("hex");
+
+/**
+ * Bandingkan hash dengan waktu tetap. Panjangnya sudah pasti sama (SHA-256 hex),
+ * tapi `===` pada string tetap keluar lebih cepat saat byte pertama berbeda.
+ */
+function secretCocok(sessionHash: string | null, secret: string | undefined): boolean {
+  // Baris yang dibuat sebelum kolom ini ada tidak punya hash — pemiliknya tetap
+  // harus bisa menyelesaikan permintaannya. Baris baru selalu mengisinya.
+  if (!sessionHash) return true;
+  if (!secret) return false;
+  const a = Buffer.from(hashSecret(secret));
+  const b = Buffer.from(sessionHash);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 type PendingInput = { noPelanggan: string; noHp: string; email: string; keluhan: string };
 export type PendingResult =
-  | { ok: true; otpId: string; emailMasked: string; ttl: number }
+  | { ok: true; otpId: string; sessionSecret: string; emailMasked: string; ttl: number }
   | { ok: false; error: string };
 
 export async function createPendingRequest(input: PendingInput): Promise<PendingResult> {
   const pelanggan = await db.pelanggan.findUnique({ where: { nosamb: input.noPelanggan } });
   if (!pelanggan) return { ok: false, error: "Nomor Pelanggan tidak ditemukan pada data PDAM." };
+
+  const cfgAwal = await getConfig();
+
+  // Cocokkan No. HP dengan kontak terdaftar (butir 3.4). createTiket()
+  // memeriksanya lagi — itu penegakan yang sebenarnya. Di sini supaya penolakan
+  // terjadi SEBELUM kami mengirim email kode ke alamat pihak yang belum tentu
+  // berhak; tanpa ini, form berubah jadi alat mengirimi orang email tak diminta.
+  const kontak = await db.pelangganKontak.findUnique({
+    where: { nosamb: input.noPelanggan },
+    select: { noHp: true },
+  });
+  const hp = verifikasiHp(
+    kontak?.noHp ?? null,
+    input.noHp,
+    cfgAwal.verifikasi_hp_wajib === "true",
+  );
+  if (!hp.cocok) return { ok: false, error: hp.error };
 
   const aktif = await db.tiket.findFirst({
     where: { noPelanggan: input.noPelanggan, status: { in: [...ACTIVE_STATUSES] } },
@@ -37,8 +106,25 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
     return { ok: false, error: `Masih ada permintaan aktif (${aktif.noTiket}). Mohon tunggu hingga selesai.` };
 
   const cfg = await getConfig();
-  const length = Number(cfg.otp_length) || 6;
-  const ttl = Number(cfg.otp_ttl_minutes) || 10;
+
+  // Cooldown antar pengajuan (butir 3.4). createTiket() memeriksanya lagi —
+  // itu tempat penegakan yang sebenarnya, karena ia juga melindungi jalur
+  // non-OTP. Pemeriksaan di sini murni supaya pengguna tahu SEBELUM kami
+  // mengirimi mereka email kode yang pada akhirnya tidak bisa dipakai.
+  const terakhir = await db.tiket.findFirst({
+    where: { noPelanggan: input.noPelanggan },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  const cooldown = evaluateCooldown(
+    terakhir?.createdAt ?? null,
+    Date.now(),
+    configNumber(cfg, "submit_cooldown_hours"),
+  );
+  if (!cooldown.allow) return { ok: false, error: cooldown.error };
+
+  const length = configNumber(cfg, "otp_length");
+  const ttl = configNumber(cfg, "otp_ttl_minutes");
   const code = genCode(length);
 
   // Hanya satu OTP aktif per pelanggan.
@@ -47,46 +133,113 @@ export async function createPendingRequest(input: PendingInput): Promise<Pending
     data: { status: "EXPIRED" },
   });
 
+  const sessionSecret = genSessionSecret();
   const row = await db.otpVerifikasi.create({
     data: {
+      token: genToken(),
+      sessionHash: hashSecret(sessionSecret),
       noPelanggan: input.noPelanggan,
       email: input.email,
       noHp: input.noHp,
       keluhan: input.keluhan,
       kodeHash: hash(code),
+      tujuan: "TIKET",
       expiredAt: new Date(Date.now() + ttl * 60_000),
       status: "PENDING",
     },
   });
 
   await notifyOtp(input.email, code, ttl);
-  return { ok: true, otpId: row.id.toString(), emailMasked: maskEmail(input.email), ttl };
+  return {
+    ok: true,
+    otpId: row.token,
+    // Dikembalikan ke server action, yang memasangnya sebagai cookie HttpOnly.
+    // Tidak pernah sampai ke komponen klien.
+    sessionSecret,
+    emailMasked: maskEmail(input.email),
+    ttl,
+  };
 }
 
-export type VerifyResult = { ok: true; noTiket: string } | { ok: false; error: string };
+export type VerifyResult =
+  // noPelanggan ikut dikembalikan supaya server action bisa menerbitkan sesi
+  // pelanggan (butir 3.6/3.8) tanpa mengambilnya lagi dari database.
+  | { ok: true; noTiket: string; noPelanggan: string }
+  | { ok: false; error: string };
 
-export async function verifyPendingOtp(otpId: string, code: string): Promise<VerifyResult> {
-  let id: bigint;
-  try {
-    id = BigInt(otpId);
-  } catch {
-    return { ok: false, error: "Sesi verifikasi tidak valid." };
+export async function verifyPendingOtp(
+  otpId: string,
+  code: string,
+  clientIp = "unknown",
+  sessionSecret?: string,
+): Promise<VerifyResult> {
+  if (!TOKEN_RE.test(otpId)) return { ok: false, error: VERIFY_FAILED };
+
+  // Throttle per-IP dan per-otpId dijalankan SEBELUM query, supaya membanjiri
+  // endpoint dengan token acak pun tetap terbatas dan tidak membebani database.
+  const byIp = await rateLimit(`otp:verify:ip:${clientIp}`, THROTTLE.verifyIp.max, THROTTLE.verifyIp.windowMs);
+  if (!byIp.allowed) {
+    // Satu IP menabrak plafon verifikasi adalah sinyal paling dini yang kita
+    // punya untuk brute-force; dicatat sebelum keluar.
+    await catatAudit({ jenis: AUDIT.OTP_THROTTLE, ip: clientIp });
+    return { ok: false, error: TOO_MANY };
   }
 
-  const row = await db.otpVerifikasi.findUnique({ where: { id } });
-  if (!row || row.status !== "PENDING")
-    return { ok: false, error: "Kode tidak ditemukan atau sudah dipakai. Silakan ajukan ulang." };
+  const byId = await rateLimit(`otp:verify:id:${otpId}`, THROTTLE.verifyId.max, THROTTLE.verifyId.windowMs);
+  if (!byId.allowed) return { ok: false, error: TOO_MANY };
+
+  const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
+  // Kode MASUK tidak boleh menyelesaikan pembuatan tiket. Pesannya disamakan
+  // dengan kegagalan lain supaya tidak jadi oracle keadaan baris.
+  if (!row || row.status !== "PENDING" || row.tujuan !== "TIKET")
+    return { ok: false, error: VERIFY_FAILED };
+  const id = row.id;
+
+  // Lapis kedua: cookie HttpOnly. Sengaja TIDAK menaikkan `attempts` dan tidak
+  // meng-EXPIRED-kan baris — kalau iya, siapa pun yang memegang token bocor
+  // tetap bisa menghabiskan jatah korban tanpa pernah menebak kode. Pesannya
+  // pun sama dengan kegagalan lain supaya tidak jadi oracle "token ini hidup".
+  if (!secretCocok(row.sessionHash, sessionSecret))
+    return { ok: false, error: VERIFY_FAILED };
+
+  const byEmail = await rateLimit(
+    `otp:verify:email:${row.email.toLowerCase()}`,
+    THROTTLE.verifyEmail.max,
+    THROTTLE.verifyEmail.windowMs,
+  );
+  if (!byEmail.allowed) return { ok: false, error: TOO_MANY };
   if (row.expiredAt < new Date()) {
     await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
-    return { ok: false, error: "Kode sudah kedaluwarsa. Minta kode baru." };
+    return { ok: false, error: VERIFY_FAILED };
   }
-  if (row.attempts >= MAX_ATTEMPTS) {
+
+  // FR-30 — batas percobaan diatur admin, di-clamp 3–10 di sisi server.
+  const maxAttempts = configNumber(await getConfig(), "otp_max_attempts");
+
+  if (row.attempts >= maxAttempts) {
     await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
-    return { ok: false, error: "Terlalu banyak percobaan. Silakan ajukan ulang." };
+    await catatAudit({
+      jenis: AUDIT.OTP_CAP_HABIS,
+      subjek: row.email,
+      ip: clientIp,
+      detail: `attempts=${row.attempts} maks=${maxAttempts}`,
+    });
+    return { ok: false, error: VERIFY_FAILED };
   }
   if (hash(code.trim()) !== row.kodeHash) {
     await db.otpVerifikasi.update({ where: { id }, data: { attempts: row.attempts + 1 } });
-    return { ok: false, error: `Kode salah. Sisa percobaan: ${MAX_ATTEMPTS - (row.attempts + 1)}.` };
+    await catatAudit({ jenis: AUDIT.OTP_KODE_SALAH, subjek: row.email, ip: clientIp });
+
+    /**
+     * Delay progresif (butir 3.2) — DI SINI, bukan di jalur kegagalan lain.
+     *
+     * Titik ini hanya bisa dicapai oleh pihak yang sudah memegang cookie sesi
+     * yang cocok, jadi orang asing tidak bisa memakainya untuk menahan koneksi
+     * server (DoS). Ia dijalankan SETELAH `attempts` naik, supaya penyerang
+     * yang memutus koneksi di tengah delay tetap kehilangan satu jatah.
+     */
+    await tidur(delayGagalMs(row.attempts));
+    return { ok: false, error: VERIFY_FAILED };
   }
 
   // Kode benar → baru sekarang laporan/tiket dibuat (email terverifikasi).
@@ -99,27 +252,65 @@ export async function verifyPendingOtp(otpId: string, code: string): Promise<Ver
   if (!res.ok) return { ok: false, error: res.error };
 
   await db.otpVerifikasi.update({ where: { id }, data: { status: "VERIFIED" } });
-  return { ok: true, noTiket: res.noTiket };
+  return { ok: true, noTiket: res.noTiket, noPelanggan: row.noPelanggan };
 }
 
-export async function resendPendingOtp(otpId: string): Promise<{ ok: boolean; error?: string }> {
-  let id: bigint;
-  try {
-    id = BigInt(otpId);
-  } catch {
-    return { ok: false, error: "Sesi verifikasi tidak valid." };
+export async function resendPendingOtp(
+  otpId: string,
+  clientIp = "unknown",
+  sessionSecret?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!TOKEN_RE.test(otpId)) return { ok: false, error: VERIFY_FAILED };
+
+  const byIp = await rateLimit(`otp:resend:ip:${clientIp}`, THROTTLE.resendIp.max, THROTTLE.resendIp.windowMs);
+  if (!byIp.allowed) return { ok: false, error: TOO_MANY };
+
+  const byId = await rateLimit(`otp:resend:id:${otpId}`, THROTTLE.resendId.max, THROTTLE.resendId.windowMs);
+  if (!byId.allowed) return { ok: false, error: TOO_MANY };
+
+  const row = await db.otpVerifikasi.findUnique({ where: { token: otpId } });
+  if (!row || row.status !== "PENDING" || row.tujuan !== "TIKET")
+    return { ok: false, error: VERIFY_FAILED };
+  const id = row.id;
+
+  // Lapis kedua: cookie HttpOnly. Ini yang menutup sisa primitif email bombing
+  // pada Issue #4 — token yang bocor tidak lagi cukup untuk memicu pengiriman
+  // email ke alamat pelanggan, maupun mengganti kode yang sudah mereka terima.
+  if (!secretCocok(row.sessionHash, sessionSecret))
+    return { ok: false, error: VERIFY_FAILED };
+
+  const byEmail = await rateLimit(
+    `otp:resend:email:${row.email.toLowerCase()}`,
+    THROTTLE.resendEmail.max,
+    THROTTLE.resendEmail.windowMs,
+  );
+  if (!byEmail.allowed) return { ok: false, error: TOO_MANY };
+
+  const gate = evaluateResendGate(row, Date.now(), {
+    ...DEFAULT_RESEND_LIMITS,
+    maxAttempts: configNumber(await getConfig(), "otp_max_attempts"),
+  });
+  if (!gate.allow) {
+    if (gate.expire) {
+      await db.otpVerifikasi.update({ where: { id }, data: { status: "EXPIRED" } });
+    }
+    return { ok: false, error: gate.error };
   }
-  const row = await db.otpVerifikasi.findUnique({ where: { id } });
-  if (!row || row.status !== "PENDING")
-    return { ok: false, error: "Tidak ada permintaan menunggu. Silakan ajukan ulang." };
 
   const cfg = await getConfig();
-  const length = Number(cfg.otp_length) || 6;
-  const ttl = Number(cfg.otp_ttl_minutes) || 10;
+  const length = configNumber(cfg, "otp_length");
+  const ttl = configNumber(cfg, "otp_ttl_minutes");
   const code = genCode(length);
+
+  // `attempts` SENGAJA tidak di-reset di sini — inilah inti perbaikan Issue #4.
   await db.otpVerifikasi.update({
     where: { id },
-    data: { kodeHash: hash(code), expiredAt: new Date(Date.now() + ttl * 60_000), attempts: 0 },
+    data: {
+      kodeHash: hash(code),
+      expiredAt: new Date(Date.now() + ttl * 60_000),
+      resendCount: { increment: 1 },
+      lastSentAt: new Date(),
+    },
   });
   await notifyOtp(row.email, code, ttl);
   return { ok: true };

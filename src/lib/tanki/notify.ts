@@ -1,6 +1,15 @@
 import { db } from "@/lib/db";
-import { getSmtpConfig } from "@/lib/tanki/config";
+import { CONFIG_DEFAULTS, getConfig, getSmtpConfig, renderTemplate, type ConfigKey } from "@/lib/tanki/config";
 import type { NotifJenis } from "@/generated/prisma/client";
+import {
+  NO_SMTP_ERROR,
+  maskRecipient,
+  readDeliveryEnv,
+  resolveDelivery,
+  shouldLogBody,
+} from "@/lib/tanki/notify-policy";
+import { kirimPesan, pesanTiketBaru } from "@/lib/tanki/pesan";
+import { trackingUrl } from "@/lib/tanki/tracking-link";
 import nodemailer from "nodemailer";
 
 type SendArgs = {
@@ -21,22 +30,47 @@ export async function sendEmail({ to, subject, body, jenis, tiketId }: SendArgs)
 
   let ok = true;
   let error: string | null = null;
+  // Dicatat terpisah dari `ok`: jalur console "berhasil" secara teknis, tapi
+  // tidak ada email yang benar-benar keluar. Lihat statusKirim di bawah.
+  let dilewati = false;
   try {
     const smtp = await getSmtpConfig();
-    if (smtp) {
-      // --- transport: SMTP (dikonfigurasi admin) ---
-      const transport = nodemailer.createTransport({
-        host: smtp.host,
-        port: smtp.port,
-        secure: smtp.secure,
-        auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
-      });
-      await transport.sendMail({ from: smtp.from, to, subject, text: body });
-    } else {
-      // --- fallback: console (SMTP belum dikonfigurasi) ---
-      console.log(
-        `\n[EMAIL→${to}] (${jenis}) ${subject}\n${body}\n(SMTP belum dikonfigurasi — set di /dashboard/konfigurasi)\n----------------------------`,
-      );
+    const env = readDeliveryEnv(Boolean(smtp));
+
+    switch (resolveDelivery(env)) {
+      case "smtp": {
+        const transport = nodemailer.createTransport({
+          host: smtp!.host,
+          port: smtp!.port,
+          secure: smtp!.secure,
+          auth: smtp!.user ? { user: smtp!.user, pass: smtp!.pass } : undefined,
+        });
+        await transport.sendMail({ from: smtp!.from, to, subject, text: body });
+        break;
+      }
+      case "console": {
+        // Development saja. Isi email hanya ikut tercetak bila boleh — kode OTP
+        // tidak pernah ikut kecuali OTP_DEBUG_LOG=1 diset sadar-sadar.
+        //
+        // SUBJECT ikut ditahan untuk OTP, bukan hanya body. Template subjek
+        // bawaan boleh diubah admin dan bisa saja memuat {{kode}}; menahan body
+        // saja persis jebakan yang diperingatkan reviewer di Issue #7 — kodenya
+        // tetap bocor utuh lewat subjek.
+        const boleh = shouldLogBody(jenis, env);
+        const detail = boleh
+          ? `${subject}\n${body}`
+          : `(subjek & isi tidak dicetak — baca di Mailpit http://localhost:8025)`;
+        console.log(
+          `\n[EMAIL→${maskRecipient(to)}] (${jenis}) ${detail}\n` +
+            `(SMTP belum dikonfigurasi — set di /dashboard/konfigurasi)\n----------------------------`,
+        );
+        dilewati = true;
+        break;
+      }
+      case "fail":
+        // Produksi tanpa SMTP: gagal terang-terangan. Kegagalannya tercatat di
+        // notifikasi_log di bawah, jadi admin punya jejak untuk ditindaklanjuti.
+        throw new Error(NO_SMTP_ERROR);
     }
   } catch (e) {
     ok = false;
@@ -50,7 +84,9 @@ export async function sendEmail({ to, subject, body, jenis, tiketId }: SendArgs)
         channel: "EMAIL",
         jenis,
         tujuan: to,
-        statusKirim: ok ? "TERKIRIM" : "GAGAL",
+        // DILEWATI, bukan TERKIRIM: tidak ada email yang benar-benar keluar
+        // lewat jalur console. Log audit FR-20/21 harus jujur soal ini.
+        statusKirim: !ok ? "GAGAL" : dilewati ? "DILEWATI" : "TERKIRIM",
         error,
       },
     });
@@ -61,46 +97,97 @@ export async function sendEmail({ to, subject, body, jenis, tiketId }: SendArgs)
   return { ok, skipped: false as const, error };
 }
 
-export function notifyTiketCreated(t: {
+
+/**
+ * Tautan lacak untuk email (Issue #6). Kegagalan menandatangani — praktisnya
+ * hanya terjadi bila AUTH_SECRET/TRACKING_LINK_SECRET tidak diset — tidak boleh
+ * menggagalkan pengiriman email tiketnya; pelapor masih bisa melacak manual.
+ */
+function safeTrackingUrl(noTiket: string): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL?.trim() || process.env.AUTH_URL?.trim();
+  if (!base) return "";
+  try {
+    return trackingUrl(noTiket, base);
+  } catch {
+    console.warn("[NOTIFIKASI] Tautan lacak tidak bisa dibuat — periksa TRACKING_LINK_SECRET/AUTH_SECRET.");
+    return "";
+  }
+}
+
+/** Ambil template dari konfigurasi admin; kosong / belum diisi → default bawaan. */
+async function template(subjectKey: ConfigKey, bodyKey: ConfigKey) {
+  const cfg = await getConfig();
+  return {
+    subject: cfg[subjectKey] || CONFIG_DEFAULTS[subjectKey],
+    body: cfg[bodyKey] || CONFIG_DEFAULTS[bodyKey],
+  };
+}
+
+export async function notifyTiketCreated(t: {
   id: bigint;
   noTiket: string;
   email: string | null;
+  noHp?: string | null;
 }) {
-  return sendEmail({
+  const { subject, body } = await template("tpl_tiket_subject", "tpl_tiket_body");
+  const vars = { no_tiket: t.noTiket, tracking_url: safeTrackingUrl(t.noTiket) };
+  const hasil = await sendEmail({
     to: t.email,
     jenis: "TIKET",
     tiketId: t.id,
-    subject: `Permintaan mobil tangki diterima — ${t.noTiket}`,
-    body:
-      `Permintaan Anda telah kami terima dengan nomor tiket ${t.noTiket}.\n` +
-      `Pantau progres di portal Tanki Je'ne' dengan No. Pelanggan + No. HP Anda.`,
+    subject: renderTemplate(subject, vars),
+    body: renderTemplate(body, vars),
   });
+
+  /**
+   * WhatsApp/SMS sebagai kanal TAMBAHAN (butir 3.3), bukan pengganti email.
+   *
+   * Banyak pelanggan PDAM tidak membuka email tapi semuanya membuka WhatsApp,
+   * jadi nomor tiket yang "hanya tampil sekali di layar" kini punya salinan
+   * yang benar-benar sampai.
+   *
+   * Kegagalannya sengaja DITELAN: tiketnya sudah tersimpan dan email sudah
+   * jalan. Gateway pihak ketiga yang mati tidak boleh membatalkan permintaan
+   * air warga — jejaknya tetap ada di notifikasi_log.
+   */
+  if (t.noHp) {
+    try {
+      await kirimPesan({ noHp: t.noHp, pesan: await pesanTiketBaru(t.noTiket), tiketId: t.id });
+    } catch {
+      // Sudah tercatat di notifikasi_log oleh kirimPesan.
+    }
+  }
+
+  return hasil;
 }
 
-export function notifyOtp(email: string, code: string, ttlMinutes: number) {
+export async function notifyOtp(email: string, code: string, ttlMinutes: number) {
+  const { subject, body } = await template("tpl_otp_subject", "tpl_otp_body");
+  const vars = { kode: code, ttl: String(ttlMinutes) };
   return sendEmail({
     to: email,
     jenis: "OTP",
-    subject: `Kode verifikasi permintaan Tanki Je'ne': ${code}`,
-    body:
-      `Kode verifikasi Anda: ${code}\n` +
-      `Masukkan kode ini di halaman permintaan untuk mengonfirmasi laporan Anda.\n` +
-      `Kode berlaku ${ttlMinutes} menit. Abaikan email ini bila Anda tidak mengajukan permintaan.`,
+    subject: renderTemplate(subject, vars),
+    body: renderTemplate(body, vars),
   });
 }
 
-export function notifyStatusChange(
+export async function notifyStatusChange(
   t: { id: bigint; noTiket: string; email: string | null },
   statusLabel: string,
   alasan?: string | null,
 ) {
+  const { subject, body } = await template("tpl_status_subject", "tpl_status_body");
+  const vars = {
+    no_tiket: t.noTiket,
+    status: statusLabel,
+    alasan: alasan ? `\nKeterangan: ${alasan}` : "",
+  };
   return sendEmail({
     to: t.email,
     jenis: "UPDATE",
     tiketId: t.id,
-    subject: `Update permintaan ${t.noTiket}: ${statusLabel}`,
-    body:
-      `Status permintaan ${t.noTiket} kini: ${statusLabel}.` +
-      (alasan ? `\nKeterangan: ${alasan}` : ""),
+    subject: renderTemplate(subject, vars),
+    body: renderTemplate(body, vars),
   });
 }

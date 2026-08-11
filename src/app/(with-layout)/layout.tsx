@@ -8,7 +8,7 @@ import { type PropsWithChildren } from "react";
 export default async function WithLayout({ children }: PropsWithChildren) {
   const session = await auth();
 
-  if (!session) {
+  if (!session || session.error === "RefreshTokenError") {
     redirect("/auth/sign-in");
   }
 

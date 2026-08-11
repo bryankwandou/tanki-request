@@ -3,6 +3,7 @@
 import { auth } from "@/lib/auth";
 import { canWrite } from "@/lib/auth/roles";
 import { db } from "@/lib/db";
+import { STATUS_TEPERCAYA, catatKontakDariTiket } from "@/lib/tanki/kontak";
 import { notifyStatusChange } from "@/lib/tanki/notify";
 import {
   canTransition,
@@ -26,6 +27,12 @@ export async function updateStatus(
   const id = BigInt(String(formData.get("tiketId") ?? "0"));
   const newStatus = String(formData.get("newStatus") ?? "") as StatusTiket;
   const catatan = String(formData.get("catatan") ?? "").trim();
+  /**
+   * Penanda publik/internal (Issue #6). Checkbox tercentang secara default di
+   * form, sehingga perilaku hari ini — alasan penolakan sampai ke pelapor —
+   * tidak berubah. Operator yang butuh catatan internal cukup mencentangnya off.
+   */
+  const catatanPublik = formData.get("catatanPublik") !== null;
 
   if (!STATUS_LABEL[newStatus]) {
     return { ok: false, error: "Status tidak dikenal." };
@@ -55,6 +62,7 @@ export async function updateStatus(
         tiketId: id,
         status: newStatus,
         catatan: catatan || null,
+        catatanPublik: Boolean(catatan) && catatanPublik,
         operatorId,
         operatorNama,
       },
@@ -85,10 +93,22 @@ export async function updateStatus(
     }
   });
 
+  /**
+   * Butir 3.4 — petugas baru saja menyatakan permintaan ini sah, jadi nomor HP
+   * pelapornya layak dijadikan kontak terdaftar. Inilah yang membuat basis data
+   * kontak terisi sendiri dari operasi sehari-hari, tanpa proyek pendataan
+   * terpisah. Hanya mengisi yang masih kosong; tidak pernah menimpa.
+   */
+  if (STATUS_TEPERCAYA.includes(newStatus as (typeof STATUS_TEPERCAYA)[number])) {
+    await catatKontakDariTiket(tiket.noPelanggan, tiket.noHp);
+  }
+
+  // Catatan internal tidak ikut ke email. Tanpa ini penandanya tidak ada artinya:
+  // catatan disembunyikan di /lacak tapi tetap terkirim ke kotak masuk pelapor.
   await notifyStatusChange(
     { id: tiket.id, noTiket: tiket.noTiket, email: tiket.email },
     STATUS_LABEL[newStatus],
-    catatan || null,
+    catatanPublik ? catatan || null : null,
   );
 
   revalidatePath(`/dashboard/permintaan/${id}`);

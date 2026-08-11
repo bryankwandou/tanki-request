@@ -5,6 +5,7 @@ import { canWrite } from "@/lib/auth/roles";
 import { db } from "@/lib/db";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LokasiForm } from "./lokasi-form";
 import { PenugasanForm } from "./penugasan-form";
 
 export const metadata: Metadata = { title: "Penugasan" };
@@ -69,6 +70,24 @@ export default async function PenugasanPage() {
           { header: "Sopir", cell: (p) => p.sopir.nama },
           { header: "Jadwal", cell: (p) => p.jadwalMulai.toLocaleString("id-ID") },
           { header: "Status", cell: (p) => p.status },
+          {
+            // Butir 3.5 — posisi hanya bisa diperbarui selama penugasan masih
+            // berjalan; yang sudah ditutup ditampilkan apa adanya.
+            header: "Posisi armada",
+            cell: (p) =>
+              !writable || p.status === "SELESAI" || p.status === "DIBATALKAN" ? (
+                <span className="text-sm text-dark-5 dark:text-dark-6">
+                  {p.lokasiTeks ?? "—"}
+                </span>
+              ) : (
+                <LokasiForm
+                  penugasanId={p.id.toString()}
+                  lokasiTeks={p.lokasiTeks}
+                  lokasiLat={p.lokasiLat === null ? null : String(p.lokasiLat)}
+                  lokasiLng={p.lokasiLng === null ? null : String(p.lokasiLng)}
+                />
+              ),
+          },
         ]}
       />
     </>

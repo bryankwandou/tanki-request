@@ -2,10 +2,83 @@
 
 import { getConfig } from "@/lib/tanki/config";
 import { createPendingRequest, resendPendingOtp, verifyPendingOtp } from "@/lib/tanki/otp";
-import { rateLimit } from "@/lib/tanki/rate-limit";
+import { extractClientIp, rateLimit } from "@/lib/tanki/rate-limit";
+import {
+  COOKIE_SESI_PELANGGAN,
+  UMUR_SESI_MS,
+  bacaSesi,
+  buatSesi,
+} from "@/lib/tanki/sesi-pelanggan";
+import { mintaKodeMasuk, verifikasiKodeMasuk } from "@/lib/tanki/otp-masuk";
 import { createTiket } from "@/lib/tanki/tiket";
-import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { cookies, headers } from "next/headers";
 import { z } from "zod";
+
+/**
+ * Cookie pengikat sesi OTP (Issue #4, lapis kedua di atas `token`).
+ *
+ * HttpOnly supaya tidak terbaca JavaScript mana pun di halaman publik.
+ * SameSite=Strict karena alur ini tidak pernah dimasuki dari situs lain —
+ * satu-satunya jalan sah adalah pengguna yang baru saja submit form di sini.
+ * `secure` mengikuti produksi supaya development lewat http tetap jalan.
+ */
+const OTP_COOKIE = "tj_otp_sesi";
+
+async function setOtpCookie(secret: string, ttlMenit: number) {
+  (await cookies()).set(OTP_COOKIE, secret, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: ttlMenit * 60,
+  });
+}
+
+async function getOtpCookie(): Promise<string | undefined> {
+  return (await cookies()).get(OTP_COOKIE)?.value;
+}
+
+async function clearOtpCookie() {
+  (await cookies()).delete(OTP_COOKIE);
+}
+
+/**
+ * Terbitkan sesi pelanggan (butir 3.6 & 3.8).
+ *
+ * Dipanggil HANYA setelah kode OTP terverifikasi — pada titik itu warga sudah
+ * membuktikan menguasai email yang terdaftar pada permintaan ini, bukti yang
+ * sama yang akan diminta alur login mana pun.
+ */
+async function terbitkanSesiPelanggan(nop: string) {
+  try {
+    (await cookies()).set(COOKIE_SESI_PELANGGAN, buatSesi(nop, Date.now()), {
+      httpOnly: true,
+      // Lax, bukan Strict: pengguna yang mengeklik tautan lacak dari email
+      // harus tetap dikenali. Cookie ini hanya membuka data miliknya sendiri
+      // dan tidak pernah dipakai untuk aksi yang mengubah apa pun.
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: Math.floor(UMUR_SESI_MS / 1000),
+    });
+  } catch {
+    // Sesi adalah kenyamanan. Kegagalan memasangnya tidak boleh membatalkan
+    // tiket yang sudah terbit.
+  }
+}
+
+/** No. Pelanggan dari sesi, untuk auto-fill & riwayat. null bila belum masuk. */
+export async function nopSesi(): Promise<string | null> {
+  const c = (await cookies()).get(COOKIE_SESI_PELANGGAN)?.value;
+  const r = bacaSesi(c, Date.now());
+  return r.ok ? r.nop : null;
+}
+
+/** Keluar — dipakai tombol "Keluar" di halaman riwayat. */
+export async function keluarSesiPelanggan() {
+  (await cookies()).delete(COOKIE_SESI_PELANGGAN);
+}
 
 export type FormState = {
   status: "idle" | "otp" | "done" | "error";
@@ -25,7 +98,10 @@ const schema = z.object({
 
 async function clientIp() {
   const h = await headers();
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
+  return extractClientIp(
+    h.get("x-forwarded-for"),
+    h.get("x-real-ip"),
+  );
 }
 
 export async function submitPermintaan(formData: FormData): Promise<FormState> {
@@ -41,18 +117,21 @@ export async function submitPermintaan(formData: FormData): Promise<FormState> {
 
   const cfg = await getConfig();
 
-  // Anti-bot/spam (FR-08/09).
+  // Anti-bot/spam (FR-08/09) — per-IP + per-customer limits.
   const ip = await clientIp();
-  if (!rateLimit(`ip:${ip}`, 5, 10 * 60_000).allowed)
+  if (!(await rateLimit(`submit:ip:${ip}`, 5, 10 * 60_000)).allowed)
     return { status: "error", error: "Terlalu banyak permintaan dari jaringan Anda. Coba lagi nanti." };
   const perHour = Number(cfg.rate_limit_per_hour) || 3;
-  if (!rateLimit(`cust:${data.noPelanggan}`, perHour, 60 * 60_000).allowed)
+  if (!(await rateLimit(`submit:cust:${data.noPelanggan}`, perHour, 60 * 60_000)).allowed)
     return { status: "error", error: "Terlalu banyak permintaan untuk Nomor Pelanggan ini. Coba lagi nanti." };
 
   // OTP = pertahanan utama: laporan baru dibuat setelah email diverifikasi.
   if (cfg.otp_enabled === "true") {
     const r = await createPendingRequest(data);
     if (!r.ok) return { status: "error", error: r.error };
+    // Secret hanya berpindah ke cookie; ia tidak pernah masuk FormState, jadi
+    // tidak pernah ikut ke komponen klien maupun payload RSC.
+    await setOtpCookie(r.sessionSecret, r.ttl);
     return { status: "otp", otpId: r.otpId, emailMasked: r.emailMasked, ttl: r.ttl };
   }
 
@@ -67,11 +146,90 @@ export async function verifyOtp(formData: FormData): Promise<FormState> {
   const code = String(formData.get("code") ?? "").trim();
   if (!code) return { status: "otp", otpId, error: "Masukkan kode verifikasi." };
 
-  const r = await verifyPendingOtp(otpId, code);
+  // Throttle per-IP + per-email ada di dalam verifyPendingOtp, tempat email
+  // permintaan diketahui. IP diresolusi di sini karena hanya server action yang
+  // punya akses ke headers().
+  const r = await verifyPendingOtp(otpId, code, await clientIp(), await getOtpCookie());
   if (!r.ok) return { status: "otp", otpId, error: r.error };
+
+  // Sesi selesai — cookie tidak perlu hidup sampai TTL habis.
+  await clearOtpCookie();
+
+  // Butir 3.6 & 3.8 — email sudah terbukti; terbitkan sesi supaya kunjungan
+  // berikutnya tidak perlu mengetik ulang apa pun.
+  if (r.noPelanggan) await terbitkanSesiPelanggan(r.noPelanggan);
+
   return { status: "done", noTiket: r.noTiket };
 }
 
 export async function resendOtp(otpId: string): Promise<{ ok: boolean; error?: string }> {
-  return resendPendingOtp(otpId);
+  return resendPendingOtp(otpId, await clientIp(), await getOtpCookie());
+}
+
+// ---------------------------------------------------------------------------
+// Masuk tanpa mengajukan permintaan (butir 3.6)
+// ---------------------------------------------------------------------------
+
+/** Cookie pengikat sesi OTP alur MASUK — dipisah dari alur tiket. */
+const MASUK_COOKIE = "tj_masuk_sesi";
+
+export type MasukState = {
+  status: "idle" | "otp" | "error";
+  error?: string;
+  otpId?: string;
+  emailMasked?: string;
+};
+
+const skemaMasuk = z.object({
+  noPelanggan: z.string().trim().regex(/^\d{9}$/, "Nomor Pelanggan harus 9 digit angka."),
+  email: z.string().trim().email("Email tidak valid."),
+});
+
+export async function mintaKodeMasukAction(formData: FormData): Promise<MasukState> {
+  const parsed = skemaMasuk.safeParse({
+    noPelanggan: formData.get("noPelanggan"),
+    email: formData.get("email"),
+  });
+  if (!parsed.success)
+    return { status: "error", error: parsed.error.issues[0]?.message ?? "Input tidak valid." };
+
+  const r = await mintaKodeMasuk(parsed.data.noPelanggan, parsed.data.email, await clientIp());
+  if (!r.ok) return { status: "error", error: r.error };
+
+  /**
+   * Balasan sama persis baik data cocok maupun tidak (lihat MASUK_GAGAL).
+   *
+   * Saat tidak cocok, `otpId` null: tidak ada kode yang dikirim, tapi pengguna
+   * tetap dibawa ke layar isi kode. Itu disengaja — halaman ini tidak boleh
+   * memberi tahu apakah sebuah No. Pelanggan pernah memakai layanan.
+   */
+  if (r.otpId && r.sessionSecret) {
+    (await cookies()).set(MASUK_COOKIE, r.sessionSecret, {
+      httpOnly: true,
+      sameSite: "strict",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: r.ttl * 60,
+    });
+  }
+
+  return {
+    status: "otp",
+    otpId: r.otpId ?? "",
+    emailMasked: r.emailMasked ?? parsed.data.email,
+  };
+}
+
+export async function verifikasiMasukAction(formData: FormData): Promise<MasukState> {
+  const otpId = String(formData.get("otpId") ?? "");
+  const code = String(formData.get("code") ?? "").trim();
+  if (!code) return { status: "otp", otpId, error: "Masukkan kode verifikasi." };
+
+  const secret = (await cookies()).get(MASUK_COOKIE)?.value;
+  const r = await verifikasiKodeMasuk(otpId, code, await clientIp(), secret);
+  if (!r.ok) return { status: "otp", otpId, error: r.error };
+
+  (await cookies()).delete(MASUK_COOKIE);
+  await terbitkanSesiPelanggan(r.noPelanggan);
+  redirect("/riwayat");
 }

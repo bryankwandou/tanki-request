@@ -9,7 +9,15 @@ const cls =
 
 type Cfg = Record<string, string>;
 
-export function KonfigurasiForm({ cfg, hasPass }: { cfg: Cfg; hasPass: boolean }) {
+export function KonfigurasiForm({
+  cfg,
+  hasPass,
+  hasWaToken,
+}: {
+  cfg: Cfg;
+  hasPass: boolean;
+  hasWaToken: boolean;
+}) {
   const [s, save, saving] = useActionState(saveKonfigurasi, initial);
   const [ts, test, testing] = useActionState(testSmtp, initial);
 
@@ -48,9 +56,112 @@ export function KonfigurasiForm({ cfg, hasPass }: { cfg: Cfg; hasPass: boolean }
               <input type="checkbox" name="otp_enabled" defaultChecked={cfg.otp_enabled === "true"} />
               <span className="text-dark dark:text-dark-6">Aktifkan OTP email</span>
             </label>
-            <Field label="Masa berlaku OTP (menit)" name="otp_ttl_minutes" def={cfg.otp_ttl_minutes} />
-            <Field label="Panjang kode OTP" name="otp_length" def={cfg.otp_length} />
-            <Field label="Maks. permintaan / jam / pelanggan" name="rate_limit_per_hour" def={cfg.rate_limit_per_hour} />
+            <Field label="Masa berlaku OTP (menit, 1–60)" name="otp_ttl_minutes" def={cfg.otp_ttl_minutes} />
+            <Field label="Panjang kode OTP (4–8)" name="otp_length" def={cfg.otp_length} />
+            <Field
+              label="Maks. percobaan salah per permintaan (3–10)"
+              name="otp_max_attempts"
+              def={cfg.otp_max_attempts}
+            />
+            <Field label="Maks. permintaan / jam / pelanggan (1–20)" name="rate_limit_per_hour" def={cfg.rate_limit_per_hour} />
+            <Field
+              label="Jeda antar pengajuan / pelanggan (jam, 0–168; 0 = mati)"
+              name="submit_cooldown_hours"
+              def={cfg.submit_cooldown_hours}
+            />
+            <label className="flex items-center gap-2 self-end text-sm">
+              <input
+                type="checkbox"
+                name="verifikasi_hp_wajib"
+                defaultChecked={cfg.verifikasi_hp_wajib === "true"}
+              />
+              <span className="text-dark dark:text-dark-6">Wajibkan No. HP terdaftar</span>
+            </label>
+          </div>
+          <p className="mt-3 text-sm text-dark-5 dark:text-dark-6">
+            <strong>Wajibkan No. HP terdaftar:</strong> No. HP yang diketik warga dicocokkan
+            dengan tabel <code>pelanggan_kontak</code>. Selama kotak ini <em>mati</em>,
+            pelanggan yang kontaknya belum terdata tetap bisa mengajukan — pencocokan hanya
+            berlaku bagi yang datanya sudah ada. Nyalakan <em>setelah</em> data kontak
+            pelanggan lengkap; menyalakannya terlalu dini akan mengunci warga yang nomornya
+            belum sempat dikumpulkan loket.
+          </p>
+          <p className="mt-3 text-sm text-dark-5 dark:text-dark-6">
+            Batas percobaan dihitung untuk seluruh umur satu permintaan dan{" "}
+            <strong>tidak pulih saat pengguna meminta kode baru</strong>. Nilai di luar rentang
+            yang tertulis akan disesuaikan otomatis ke batas terdekat saat disimpan.
+          </p>
+          <p className="mt-2 text-sm text-dark-5 dark:text-dark-6">
+            <strong>Jeda antar pengajuan</strong> dihitung dari tiket terakhir pelanggan di
+            database — berbeda dari batas per jam di atas, jeda ini tetap berlaku setelah
+            aplikasi atau Redis di-restart, dan tidak ikut lepas saat tiket sebelumnya
+            ditutup. Isi <code>0</code> untuk mematikannya (mis. saat krisis air).
+          </p>
+        </section>
+
+        {/* WhatsApp / SMS — butir 3.3 laporan review */}
+        <section className="rounded-[10px] bg-white p-6 shadow-1 dark:bg-gray-dark">
+          <h2 className="mb-1 text-body-lg font-bold text-dark dark:text-white">
+            WhatsApp / SMS
+          </h2>
+          <p className="mb-4 text-sm text-dark-5 dark:text-dark-6">
+            Kanal <strong>tambahan</strong> untuk mengirim nomor tiket — email tetap jalan.
+            Sengaja tidak terikat satu vendor: isi URL dan bentuk payload sesuai gateway yang
+            dipakai PDAM (Wablas, Fonnte, Zenziva, Twilio, atau gateway internal). Selama URL
+            kosong, pengiriman dicatat sebagai <code>DILEWATI</code> — bukan diakui terkirim.
+          </p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <label className="flex items-center gap-2 self-end text-sm">
+              <input type="checkbox" name="wa_enabled" defaultChecked={cfg.wa_enabled === "true"} />
+              <span className="text-dark dark:text-dark-6">Aktifkan WA/SMS</span>
+            </label>
+            <Field
+              label="URL gateway"
+              name="wa_api_url"
+              def={cfg.wa_api_url}
+              placeholder="https://gateway.contoh.id/send"
+            />
+            <label className="flex flex-col gap-1 text-sm md:col-span-2">
+              <span className="text-dark-5 dark:text-dark-6">Token / API key</span>
+              <input
+                name="wa_api_token"
+                type="password"
+                placeholder={
+                  hasWaToken ? "•••••• (biarkan kosong = tidak berubah)" : "(belum diatur)"
+                }
+                className={cls}
+              />
+            </label>
+          </div>
+          <div className="mt-4 grid gap-4">
+            <TextArea
+              label="Bentuk payload JSON — placeholder: {{no_hp}} {{pesan}} {{token}}"
+              name="wa_payload_template"
+              def={cfg.wa_payload_template}
+            />
+            <TextArea
+              label="Isi pesan tiket baru — placeholder: {{no_tiket}}"
+              name="wa_tpl_tiket"
+              def={cfg.wa_tpl_tiket}
+            />
+          </div>
+        </section>
+
+        {/* Template email */}
+        <section className="rounded-[10px] bg-white p-6 shadow-1 dark:bg-gray-dark">
+          <h2 className="mb-1 text-body-lg font-bold text-dark dark:text-white">Template Email</h2>
+          <p className="mb-4 text-sm text-dark-5 dark:text-dark-6">
+            Placeholder yang tersedia: <code>{"{{kode}}"}</code> <code>{"{{ttl}}"}</code>{" "}
+            <code>{"{{no_tiket}}"}</code> <code>{"{{status}}"}</code> <code>{"{{alasan}}"}</code>.
+            Kosongkan sebuah kolom untuk mengembalikannya ke teks bawaan.
+          </p>
+          <div className="grid gap-4">
+            <Field label="Subjek — OTP" name="tpl_otp_subject" def={cfg.tpl_otp_subject} />
+            <TextArea label="Isi — OTP" name="tpl_otp_body" def={cfg.tpl_otp_body} />
+            <Field label="Subjek — tiket dibuat" name="tpl_tiket_subject" def={cfg.tpl_tiket_subject} />
+            <TextArea label="Isi — tiket dibuat" name="tpl_tiket_body" def={cfg.tpl_tiket_body} />
+            <Field label="Subjek — perubahan status" name="tpl_status_subject" def={cfg.tpl_status_subject} />
+            <TextArea label="Isi — perubahan status" name="tpl_status_body" def={cfg.tpl_status_body} />
           </div>
         </section>
 
@@ -90,6 +201,15 @@ function Field({ label, name, def, placeholder }: { label: string; name: string;
     <label className="flex flex-col gap-1 text-sm">
       <span className="text-dark-5 dark:text-dark-6">{label}</span>
       <input name={name} defaultValue={def} placeholder={placeholder} className={cls} />
+    </label>
+  );
+}
+
+function TextArea({ label, name, def }: { label: string; name: string; def?: string }) {
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-dark-5 dark:text-dark-6">{label}</span>
+      <textarea name={name} defaultValue={def} rows={4} className={`${cls} font-mono`} />
     </label>
   );
 }

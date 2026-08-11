@@ -1,6 +1,10 @@
 import { db } from "@/lib/db";
-import { ACTIVE_STATUSES } from "@/lib/tanki/status";
+import { configNumber, getConfig } from "@/lib/tanki/config";
 import { notifyTiketCreated } from "@/lib/tanki/notify";
+import { genNoTiket } from "@/lib/tanki/no-tiket";
+import { evaluateCooldown } from "@/lib/tanki/pengajuan-guard";
+import { ACTIVE_STATUSES } from "@/lib/tanki/status";
+import { verifikasiHp } from "@/lib/tanki/verifikasi-hp";
 
 export type CreateTiketInput = {
   noPelanggan: string;
@@ -12,17 +16,6 @@ export type CreateTiketInput = {
 export type CreateTiketResult =
   | { ok: true; noTiket: string }
   | { ok: false; error: string };
-
-function pad(n: number) {
-  return n.toString().padStart(2, "0");
-}
-
-function genNoTiket(): string {
-  const d = new Date();
-  const ymd = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
-  const rand = Math.floor(Math.random() * 1296).toString(36).toUpperCase().padStart(4, "0");
-  return `TJ-${ymd}-${rand}`;
-}
 
 export async function createTiket(
   input: CreateTiketInput,
@@ -38,6 +31,23 @@ export async function createTiket(
     };
   }
 
+  // 1b. Cocokkan No. HP dengan kontak terdaftar PDAM (butir 3.4).
+  //
+  // Inilah yang menutup "siapa pun yang tahu No. Pelanggan orang lain bisa
+  // mengajukan atas nama mereka". Berlaku hanya untuk pelanggan yang kontaknya
+  // SUDAH ada, kecuali admin menyalakan mode ketat — lihat verifikasi-hp.ts.
+  const cfgHp = await getConfig();
+  const kontak = await db.pelangganKontak.findUnique({
+    where: { nosamb: input.noPelanggan },
+    select: { noHp: true },
+  });
+  const hp = verifikasiHp(
+    kontak?.noHp ?? null,
+    input.noHp,
+    cfgHp.verifikasi_hp_wajib === "true",
+  );
+  if (!hp.cocok) return { ok: false, error: hp.error };
+
   // 2. Cegah duplikasi permintaan aktif (FR-12).
   const aktif = await db.tiket.findFirst({
     where: {
@@ -52,6 +62,21 @@ export async function createTiket(
       error: `Masih ada permintaan aktif (${aktif.noTiket}, status ${aktif.status}). Mohon tunggu hingga selesai.`,
     };
   }
+
+  // 2b. Cooldown antar pengajuan (butir 3.4 laporan review).
+  //
+  // Guard di atas hanya berlaku selama tiket sebelumnya belum ditutup. Tanpa
+  // cooldown, pelanggan yang tiketnya baru saja SELESAI bisa langsung mengantre
+  // lagi, berulang kali sehari. Dihitung dari tiket TERAKHIR apa pun statusnya,
+  // jadi membatalkan permintaan sendiri pun tidak mereset jatah.
+  const cooldownJam = configNumber(await getConfig(), "submit_cooldown_hours");
+  const terakhir = await db.tiket.findFirst({
+    where: { noPelanggan: input.noPelanggan },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  const cooldown = evaluateCooldown(terakhir?.createdAt ?? null, Date.now(), cooldownJam);
+  if (!cooldown.allow) return { ok: false, error: cooldown.error };
 
   // 3. Buat tiket + riwayat awal dalam satu transaksi (FR-07).
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -77,6 +102,8 @@ export async function createTiket(
             tiketId: tiket.id,
             status: "DITERIMA",
             catatan: "Permintaan diterima sistem.",
+            // Catatan sistem memang untuk dibaca pelapor (Issue #6).
+            catatanPublik: true,
           },
         });
         return tiket;
@@ -85,6 +112,7 @@ export async function createTiket(
         id: created.id,
         noTiket: created.noTiket,
         email: created.email,
+        noHp: created.noHp,
       });
       return { ok: true, noTiket };
     } catch (e) {

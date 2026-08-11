@@ -25,6 +25,30 @@ model Pelanggan {
   @@map("pelanggan")
 }
 
+/// Kontak pelanggan — pelengkap master, butir 3.4 laporan review.
+///
+/// Tabel master `pelanggan` hasil impor PDAM TIDAK punya kolom nomor HP, jadi
+/// permintaan laporan untuk "cocokkan dengan nomor HP terdaftar" tidak bisa
+/// dipenuhi dari sana. Tabel ini wadahnya, dipisah supaya:
+///
+///   - `pelanggan` tetap bisa di-drop & diimpor ulang dari dump PDAM tanpa
+///     ikut membuang kontak yang sudah dikumpulkan loket;
+///   - pengisiannya bisa bertahap — sistem tetap jalan untuk pelanggan yang
+///     kontaknya belum ada (lihat src/lib/tanki/verifikasi-hp.ts).
+///
+/// Diisi dari sisi PDAM (impor atau loket), bukan dari form publik — kalau
+/// warga bisa mendaftarkan nomornya sendiri lewat form, verifikasinya tidak
+/// memverifikasi apa pun.
+model PelangganKontak {
+  nosamb    String   @id @db.Char(9)
+  noHp      String   @map("no_hp") @db.VarChar(20)
+  sumber    String?  @db.VarChar(40)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([noHp])
+  @@map("pelanggan_kontak")
+}
+
 // ---------------------------------------------------------------------------
 // Transaksi
 // ---------------------------------------------------------------------------
@@ -65,15 +89,33 @@ enum OtpStatus {
   EXPIRED
 }
 
+/// Untuk apa sebuah kode OTP diterbitkan.
+///
+/// Dipisah tegas karena akibatnya berbeda jauh: kode TIKET membuat permintaan
+/// mobil tangki, kode MASUK hanya menerbitkan sesi baca-saja. Tanpa pembeda
+/// ini, kode yang diminta untuk "masuk" bisa dipakai menyelesaikan pembuatan
+/// tiket, dan sebaliknya.
+enum OtpTujuan {
+  TIKET
+  MASUK
+}
+
 enum NotifJenis {
   OTP
   TIKET
   UPDATE
+  // Email percobaan dari halaman konfigurasi. Dipisah supaya uji coba admin
+  // tidak bercampur dengan notifikasi tiket di log audit (FR-20/21).
+  TES
 }
 
 enum KirimStatus {
   TERKIRIM
   GAGAL
+  // Tidak ada email yang benar-benar keluar — jalur fallback console saat SMTP
+  // belum dikonfigurasi (khusus non-produksi). Dicatat terpisah supaya log
+  // audit tidak mengklaim "TERKIRIM" untuk email yang tidak pernah ada.
+  DILEWATI
 }
 
 model Tiket {
@@ -98,7 +140,16 @@ model Tiket {
   @@index([status])
   @@index([noPelanggan])
   @@index([noHp])
-  @@index([createdAt])
+  /// Query utama modul Laporan (Issue #1): range scan `created_at`, lalu
+  /// dikelompokkan per status / wilayah / rayon. Dengan index single-column
+  /// `created_at` saja, pengelompokannya jatuh ke filesort — tidak terasa
+  /// sekarang, tapi tabel ini justru yang paling sering discan seiring tumbuh.
+  ///
+  /// `created_at` tetap menjadi kolom paling kiri, jadi kedua index ini juga
+  /// melayani seluruh query yang dulu memakai `@@index([createdAt])` —
+  /// karenanya index tunggal itu dihapus, bukan ditambahi.
+  @@index([createdAt, status])
+  @@index([createdAt, wil, koderayon])
   @@map("tiket")
 }
 
@@ -108,6 +159,10 @@ model TiketRiwayat {
   tiket        Tiket       @relation(fields: [tiketId], references: [id], onDelete: Cascade)
   status       StatusTiket
   catatan      String?     @db.Text
+  /// Apakah `catatan` boleh dilihat pelapor di /lacak (Issue #6).
+  /// Default false: catatan operator bersifat internal kecuali dinyatakan
+  /// sebaliknya, sehingga baris lama tetap tersembunyi setelah migrasi.
+  catatanPublik Boolean    @default(false) @map("catatan_publik")
   operatorId   String?     @map("operator_id") @db.VarChar(64)
   operatorNama String?     @map("operator_nama") @db.VarChar(150)
   createdAt    DateTime    @default(now()) @map("created_at")
@@ -118,17 +173,45 @@ model TiketRiwayat {
 
 model OtpVerifikasi {
   id          BigInt    @id @default(autoincrement())
+  // Identitas yang dipegang klien selama alur OTP. Sengaja BUKAN `id`:
+  // id bersifat sequential, jadi penyerang bisa menebak/menghitung otpId milik
+  // orang lain dan menyerang permintaan yang bukan miliknya. 32 byte acak
+  // (base64url) tidak bisa ditebak. Lihat Issue #4.
+  token       String    @unique @db.VarChar(64)
+  /// SHA-256 dari secret yang hanya ada di cookie HttpOnly milik browser
+  /// pemohon — lapis kedua di atas `token` (Issue #4).
+  ///
+  /// `token` adalah capability token: siapa pun yang memegangnya boleh
+  /// bertindak. Itu cukup melawan enumerasi, tapi tidak melawan token yang
+  /// bocor lewat jalur lain — Referer, log proxy, riwayat peramban, layar yang
+  /// terlihat orang lain. Dengan kolom ini, token saja tidak cukup: penyerang
+  /// juga harus memegang cookie yang tidak pernah terbaca JavaScript dan tidak
+  /// pernah ikut di URL.
+  ///
+  /// Nullable supaya baris yang dibuat sebelum kolom ini ada tetap bisa
+  /// diselesaikan pemiliknya; baris baru selalu mengisinya.
+  sessionHash String?   @map("session_hash") @db.VarChar(64)
   noPelanggan String    @map("no_pelanggan") @db.Char(9)
   email       String    @db.VarChar(150)
   noHp        String    @map("no_hp") @db.VarChar(20)
   keluhan     String    @db.Text
   kodeHash    String    @map("kode_hash") @db.VarChar(255)
+  /// Lihat enum OtpTujuan. Default TIKET supaya baris lama tetap bermakna sama.
+  tujuan      OtpTujuan @default(TIKET)
   expiredAt   DateTime  @map("expired_at")
+  // Percobaan verifikasi GAGAL sepanjang umur permintaan ini. Sengaja TIDAK
+  // di-reset saat kirim ulang — reset itulah yang membuat cap-nya bisa dilewati
+  // (Issue #4): 5 tebakan, kirim ulang, 5 tebakan lagi, tanpa batas.
   attempts    Int       @default(0)
+  // Berapa kali kode dikirim ulang untuk permintaan ini, dibatasi di server.
+  resendCount Int       @default(0) @map("resend_count")
+  // Waktu pengiriman kode terakhir, untuk jeda antar kirim ulang.
+  lastSentAt  DateTime  @default(now()) @map("last_sent_at")
   status      OtpStatus @default(PENDING)
   createdAt   DateTime  @default(now()) @map("created_at")
 
   @@index([noPelanggan, status])
+  @@index([email, status])
   @@map("otp_verifikasi")
 }
 
@@ -154,6 +237,30 @@ model NotifikasiLog {
 
   @@index([tiketId])
   @@map("notifikasi_log")
+}
+
+/// Jejak percobaan yang MENCURIGAKAN, untuk deteksi anomali (butir 3.2
+/// laporan review UX & keamanan).
+///
+/// Bukan log aktivitas umum: hanya kegagalan yang berpola serangan yang
+/// dicatat, supaya tabelnya tetap kecil dan benar-benar dibaca.
+///
+/// `subjek` menyimpan HASH identitas (email / No. Pelanggan), bukan nilai
+/// aslinya. Pengelompokan "berapa kali subjek yang sama gagal" tetap bisa
+/// dilakukan, tanpa membuat tabel ini jadi tempat penampungan data pribadi
+/// baru yang ikut bocor kalau database dicuri.
+model AuditKeamanan {
+  id        BigInt   @id @default(autoincrement())
+  jenis     String   @db.VarChar(40)
+  subjek    String?  @db.VarChar(64)
+  ip        String?  @db.VarChar(64)
+  detail    String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// Query utamanya: "berapa kejadian jenis X dalam rentang waktu Y".
+  @@index([jenis, createdAt])
+  @@index([ip, createdAt])
+  @@map("audit_keamanan")
 }
 
 model Kendaraan {
@@ -198,6 +305,23 @@ model Penugasan {
   jadwalSelesai DateTime?       @map("jadwal_selesai")
   status        PenugasanStatus @default(DIJADWALKAN)
   assignedBy    String?         @map("assigned_by") @db.VarChar(64)
+
+  /// Posisi armada terkini (butir 3.5 laporan review).
+  ///
+  /// Laporan meminta peta real-time seperti pelacakan paket, dan sekaligus
+  /// mencatat itu butuh GPS tracker di setiap mobil — perangkat yang belum
+  /// dimiliki PDAM. Tiga kolom ini adalah jalan tengah yang bisa hidup hari
+  /// ini: petugas/sopir memperbarui posisi lewat dashboard, warga melihatnya
+  /// di halaman lacak. Begitu unit ber-GPS, pengisi kolom ini tinggal diganti
+  /// dari input manual menjadi umpan perangkat — bentuk datanya sudah sama,
+  /// dan halaman publiknya tidak perlu diubah lagi.
+  lokasiTeks    String?         @map("lokasi_teks") @db.VarChar(200)
+  /// Desimal, bukan float: koordinat yang dibulatkan float bisa bergeser
+  /// puluhan meter. 8 angka di belakang koma ≈ presisi milimeter.
+  lokasiLat     Decimal?        @map("lokasi_lat") @db.Decimal(10, 8)
+  lokasiLng     Decimal?        @map("lokasi_lng") @db.Decimal(11, 8)
+  lokasiPada    DateTime?       @map("lokasi_pada")
+
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
 

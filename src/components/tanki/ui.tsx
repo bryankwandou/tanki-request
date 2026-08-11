@@ -68,11 +68,3 @@ export function StatCard({
     body
   );
 }
-
-export function StubNotice({ children }: PropsWithChildren) {
-  return (
-    <div className="rounded-lg border border-dashed border-stroke p-4 text-sm text-dark-5 dark:border-dark-3 dark:text-dark-6">
-      {children}
-    </div>
-  );
-}

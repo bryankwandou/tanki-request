@@ -13,8 +13,20 @@ const display = Plus_Jakarta_Sans({
 
 export default function PublicLayout({ children }: PropsWithChildren) {
   return (
-    <div className={`${display.variable} min-h-screen bg-[#f0f9ff] text-[#0a2540]`}>
-      <header className="sticky top-0 z-30 border-b border-[#e0f2fe] bg-white/85 backdrop-blur">
+    <div
+      className={`${display.variable} flex min-h-screen flex-col bg-[#f0f9ff] text-[#0a2540]`}
+    >
+      {/*
+        Header sengaja TIDAK sticky.
+
+        Versi sebelumnya melayang di atas konten (`sticky top-0` dengan latar
+        semi-transparan), sehingga pada layar pendek dan pada tingkat zoom
+        rendah ia menutupi bagian atas isi halaman. Header yang menetap membuat
+        posisinya bisa diprediksi: ia menggulung bersama halaman seperti elemen
+        lain. Latarnya dibuat penuh — transparansi dan blur hanya berguna
+        selagi ia melayang.
+      */}
+      <header className="border-b border-[#e0f2fe] bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
             <Image
@@ -35,16 +47,33 @@ export default function PublicLayout({ children }: PropsWithChildren) {
             </span>
           </Link>
 
-          <Link
-            href="/lacak"
-            className="rounded-full border border-[#bae6fd] px-3.5 py-2 text-xs font-semibold text-[#0369a1] transition hover:bg-[#e0f2fe] sm:px-4 sm:text-sm"
-          >
-            Lacak Permintaan
-          </Link>
+          <div className="flex items-center gap-2">
+            {/*
+              Butir 3.6 — masuk bersifat OPSIONAL, jadi ia berdampingan dengan
+              lacak, bukan menggantikannya dan bukan gerbang di depan apa pun.
+            */}
+            <Link
+              href="/masuk"
+              className="rounded-full px-3 py-2 text-xs font-semibold text-[#0369a1] transition hover:bg-[#e0f2fe] sm:px-3.5 sm:text-sm"
+            >
+              Masuk
+            </Link>
+            <Link
+              href="/lacak"
+              className="rounded-full border border-[#bae6fd] px-3.5 py-2 text-xs font-semibold text-[#0369a1] transition hover:bg-[#e0f2fe] sm:px-4 sm:text-sm"
+            >
+              Lacak Permintaan
+            </Link>
+          </div>
         </div>
       </header>
 
-      <main>{children}</main>
+      {/*
+        `flex-1` mendorong footer ke dasar layar saat isi halaman lebih pendek
+        dari jendela. Tanpa ini, footer berhenti tepat di bawah isi dan
+        menyisakan pita latar biru di bawahnya.
+      */}
+      <main className="flex-1">{children}</main>
 
       <footer className="border-t border-[#e0f2fe] bg-white">
         <div className="mx-auto max-w-6xl px-4 py-7 text-center text-xs text-[#0a2540]/55 sm:px-6 sm:text-sm">

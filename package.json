@@ -9,7 +9,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
+    "test": "vitest run",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio"
@@ -22,8 +23,11 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dayjs": "^1.11.13",
+    "exceljs": "^4.4.0",
     "flatpickr": "^4.6.13",
+    "ioredis": "^5.11.1",
     "jsvectormap": "^1.6.0",
+    "lru-cache": "^11.0.0",
     "mariadb": "^3.4.2",
     "next": "^16.1.6",
     "next-auth": "5.0.0-beta.29",
@@ -37,6 +41,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
     "@tailwindcss/postcss": "^4.2.4",
     "@types/node": "^22",
     "@types/nodemailer": "^8.0.1",
@@ -51,6 +56,7 @@
     "prisma": "^7.8.0",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }
