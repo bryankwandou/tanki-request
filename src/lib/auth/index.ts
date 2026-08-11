@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import Keycloak from "next-auth/providers/keycloak";
+import { evaluasiKeycloak } from "@/lib/auth/keycloak-guard";
 
 /** Diagnostik login hanya aktif bila diminta — lihat authDiag(). */
 const AUTH_DEBUG = process.env.AUTH_DEBUG === "1";
@@ -141,6 +142,27 @@ async function refreshKeycloakToken(token: JWT): Promise<JWT> {
  * (confidential: Auth.js menukar authorization code di sisi server, PKCE aktif).
  * Realm role tidak ada di id_token secara default — kita baca dari access_token.
  */
+/**
+ * Gerbang Issue #2 — dievaluasi sekali saat modul dimuat.
+ *
+ * Di produksi, konfigurasi yang menandakan client masih PUBLIC membuat provider
+ * Keycloak tidak dipasang sama sekali: login operator mati dengan sebab yang
+ * tercetak, alih-alih hidup dengan alur penukaran kode yang tidak terautentikasi.
+ * Gagal terang-terangan, bukan diam-diam tidak aman.
+ */
+const GERBANG_KEYCLOAK = evaluasiKeycloak({
+  issuer: process.env.AUTH_KEYCLOAK_ISSUER,
+  clientId: process.env.AUTH_KEYCLOAK_ID,
+  clientSecret: process.env.AUTH_KEYCLOAK_SECRET,
+  isProduction: process.env.NODE_ENV === "production",
+});
+
+if (!GERBANG_KEYCLOAK.boleh) {
+  console.error(`[AUTH] Login operator DINONAKTIFKAN. ${GERBANG_KEYCLOAK.alasan}`);
+} else if (GERBANG_KEYCLOAK.peringatan) {
+  console.warn(`[AUTH] ${GERBANG_KEYCLOAK.peringatan}`);
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
     Keycloak({
@@ -148,7 +170,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       clientSecret: process.env.AUTH_KEYCLOAK_SECRET,
       issuer: process.env.AUTH_KEYCLOAK_ISSUER,
     }),
-  ],
+  ].filter(() => GERBANG_KEYCLOAK.boleh),
   session: { strategy: "jwt" },
   pages: {
     signIn: "/auth/sign-in",
